@@ -32,9 +32,15 @@
     </section>
 
     <section class="list-wrap">
-      <h2>账号档案</h2>
+      <h2>当前 IMA 登录</h2>
+      <div id="currentCard" class="accounts"></div>
+      <p class="empty" id="currentEmpty" hidden>未能读取当前登录信息。请确认已安装 IMA，或先登录客户端。</p>
+    </section>
+
+    <section class="list-wrap">
+      <h2>本地账号档案 <span class="count" id="accountCount"></span></h2>
       <div id="accounts" class="accounts"></div>
-      <p class="empty" id="empty" hidden>还没有账号。先在 IMA 登录，然后点「保存当前账号」。</p>
+      <p class="empty" id="empty" hidden>还没有保存的账号。先在 IMA 登录，然后点「保存当前账号」。</p>
     </section>
 
     <footer class="foot">

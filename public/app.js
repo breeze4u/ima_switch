@@ -1,6 +1,6 @@
 const $ = (sel) => document.querySelector(sel);
 
-let health = { imaRunning: false, imaFound: false };
+let health = { imaRunning: false, imaFound: false, current: null };
 let pendingExportId = null;
 let pendingImportFile = null;
 let pendingSwitchId = null;
@@ -28,6 +28,46 @@ async function api(path, options = {}) {
   return res;
 }
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function initials(name) {
+  const s = String(name || '?').trim();
+  return s.slice(0, 1).toUpperCase() || '?';
+}
+
+function avatarEl(a) {
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  if (a?.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = a.avatarUrl;
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.onerror = () => {
+      avatar.textContent = initials(a.nickname || a.name);
+    };
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = initials(a?.nickname || a?.name);
+  }
+  return avatar;
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return iso;
+  }
+}
+
 async function loadHealth() {
   health = await api('/api/health');
   $('#imaPath').textContent = health.imaUserData || '-';
@@ -43,60 +83,139 @@ async function loadHealth() {
   }
 }
 
-function initials(name) {
-  const s = String(name || '?').trim();
-  return s.slice(0, 1).toUpperCase();
+function renderCurrent(current, imaRunning, matched) {
+  const box = $('#currentCard');
+  const empty = $('#currentEmpty');
+  box.innerHTML = '';
+  if (!current || !current.userId) {
+    empty.hidden = false;
+    empty.textContent = imaRunning
+      ? 'IMA 正在运行，但未能读取当前登录身份。'
+      : 'IMA 未运行，或本地没有可读的登录信息。';
+    return;
+  }
+  empty.hidden = true;
+
+  const card = document.createElement('article');
+  card.className = 'card card-current';
+  const badge = document.createElement('div');
+  badge.className = 'badge';
+  badge.textContent = matched ? '当前 · 已存档' : '当前登录';
+  const avatar = avatarEl(current);
+  const mid = document.createElement('div');
+  mid.innerHTML = `
+    <div class="name">
+      ${escapeHtml(current.nickname || '未命名账号')}
+      <span class="tag ${current.isLoggedIn ? 'ok' : 'warn'}">${current.isLoggedIn ? '已登录' : '状态未知'}</span>
+    </div>
+    <div class="desc">
+      uid <code>${escapeHtml(current.userId)}</code>
+      ${current.openid ? ` · openid <code>${escapeHtml(current.openid)}</code>` : ''}
+      ${matched ? `<br/>已对应档案：<strong>${escapeHtml(matched.name)}</strong>（<code>${escapeHtml(matched.id)}</code>）` : ''}
+    </div>`;
+  const ops = document.createElement('div');
+  ops.className = 'ops';
+  const btnSaveAs = document.createElement('button');
+  btnSaveAs.className = 'btn primary';
+  btnSaveAs.textContent = matched ? '更新该档案' : '保存为账号';
+  btnSaveAs.onclick = () => {
+    if (matched) {
+      pendingResave(matched);
+    } else {
+      $('#saveForm').name.value = current.nickname || '';
+      $('#saveForm').note.value = '';
+      $('#dlgSave').showModal();
+    }
+  };
+  const btnLaunch = document.createElement('button');
+  btnLaunch.className = 'btn';
+  btnLaunch.textContent = imaRunning ? '重启 IMA' : '启动 IMA';
+  btnLaunch.onclick = async () => {
+    try {
+      if (imaRunning) {
+        await api('/api/ima/restart', { method: 'POST' });
+        toast('IMA 已重启');
+      } else {
+        await api('/api/ima/launch', { method: 'POST' });
+        toast('IMA 已启动');
+      }
+      await refresh();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+  ops.append(btnSaveAs, btnLaunch);
+  card.append(avatar, mid, ops);
+  // badge overlays first column visually via CSS grid
+  card.prepend(badge);
+  box.appendChild(card);
 }
 
-function renderAccounts(accounts) {
+async function pendingResave(account) {
+  if (!confirm(`用当前 IMA 登录状态覆盖「${account.name}」？`)) return;
+  try {
+    await api(`/api/accounts/${encodeURIComponent(account.id)}/resave`, { method: 'POST' });
+    toast('已覆盖保存');
+    await refresh();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderAccounts(accounts, currentUserId) {
   const box = $('#accounts');
   box.innerHTML = '';
   $('#empty').hidden = accounts.length > 0;
+  $('#accountCount').textContent = accounts.length ? `（${accounts.length}）` : '';
+
   for (const a of accounts) {
+    const isCurrent = !!(currentUserId && a.userId === currentUserId);
     const card = document.createElement('article');
-    card.className = 'card';
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    if (a.avatarUrl) {
-      const img = document.createElement('img');
-      img.src = a.avatarUrl;
-      img.alt = '';
-      img.referrerPolicy = 'no-referrer';
-      avatar.appendChild(img);
-    } else {
-      avatar.textContent = initials(a.nickname || a.name);
+    card.className = `card${isCurrent ? ' is-current' : ''}`;
+    if (isCurrent) {
+      const tag = document.createElement('span');
+      tag.className = 'current-pill';
+      tag.textContent = '当前使用中';
+      card.appendChild(tag);
     }
+    card.appendChild(avatarEl(a));
     const mid = document.createElement('div');
     mid.innerHTML = `
-      <div class="name">${escapeHtml(a.name)}${a.nickname ? ` <span style="color:var(--muted);font-weight:400;font-size:13px">· ${escapeHtml(a.nickname)}</span>` : ''}</div>
+      <div class="name">
+        ${escapeHtml(a.name)}
+        ${a.nickname ? ` <span class="muted-nick">· ${escapeHtml(a.nickname)}</span>` : ''}
+      </div>
       <div class="desc">
-        ID <code>${escapeHtml(a.id)}</code>
+        档案 <code>${escapeHtml(a.id)}</code>
         ${a.userId ? ` · uid <code>${escapeHtml(a.userId)}</code>` : ''}
-        ${a.updatedAt ? ` · 更新 ${escapeHtml(a.updatedAt)}` : ''}
-        ${a.lastUsedAt ? ` · 上次使用 ${escapeHtml(a.lastUsedAt)}` : ''}
-        ${a.note ? `<br/>${escapeHtml(a.note)}` : ''}
+        <br/>
+        更新 ${escapeHtml(fmtTime(a.updatedAt) || '-')}
+        ${a.lastUsedAt ? ` · 上次使用 ${escapeHtml(fmtTime(a.lastUsedAt))}` : ''}
+        ${a.note ? `<br/>备注：${escapeHtml(a.note)}` : ''}
       </div>`;
     const ops = document.createElement('div');
     ops.className = 'ops';
-    ops.innerHTML = `
-      <button class="btn primary" data-act="switch">切换</button>
-      <button class="btn" data-act="resave">覆盖保存</button>
-      <button class="btn" data-act="export">导出</button>
-      <button class="btn danger" data-act="delete">删除</button>
-    `;
-    ops.querySelector('[data-act="switch"]').onclick = () => openSwitch(a);
-    ops.querySelector('[data-act="resave"]').onclick = async () => {
-      if (!confirm(`用当前 IMA 登录状态覆盖「${a.name}」？`)) return;
-      try {
-        await api(`/api/accounts/${encodeURIComponent(a.id)}/resave`, { method: 'POST' });
-        toast('已覆盖保存');
-        await refresh();
-      } catch (e) {
-        toast(e.message, true);
-      }
-    };
-    ops.querySelector('[data-act="export"]').onclick = () => openExport(a);
-    ops.querySelector('[data-act="delete"]').onclick = async () => {
+
+    const btnSwitch = document.createElement('button');
+    btnSwitch.className = 'btn primary';
+    btnSwitch.textContent = isCurrent ? '重新应用' : '切换到此账号';
+    btnSwitch.disabled = isCurrent && !health.imaFound;
+    btnSwitch.onclick = () => openSwitch(a, isCurrent);
+
+    const btnResave = document.createElement('button');
+    btnResave.className = 'btn';
+    btnResave.textContent = '覆盖保存';
+    btnResave.onclick = () => pendingResave(a);
+
+    const btnExport = document.createElement('button');
+    btnExport.className = 'btn';
+    btnExport.textContent = '导出';
+    btnExport.onclick = () => openExport(a);
+
+    const btnDelete = document.createElement('button');
+    btnDelete.className = 'btn danger';
+    btnDelete.textContent = '删除';
+    btnDelete.onclick = async () => {
       if (!confirm(`删除账号「${a.name}」？此操作不可恢复。`)) return;
       try {
         await api(`/api/accounts/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
@@ -106,30 +225,30 @@ function renderAccounts(accounts) {
         toast(e.message, true);
       }
     };
-    card.append(avatar, mid, ops);
+
+    ops.append(btnSwitch, btnResave, btnExport, btnDelete);
+    card.append(mid, ops);
     box.appendChild(card);
   }
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
 async function refresh() {
   await loadHealth();
-  const { accounts } = await api('/api/accounts');
-  renderAccounts(accounts);
+  const { accounts, current, imaRunning } = await api('/api/accounts');
+  const matched =
+    current?.userId && accounts.find((a) => a.userId === current.userId)
+      ? accounts.find((a) => a.userId === current.userId)
+      : null;
+  renderCurrent(current || health.current, imaRunning ?? health.imaRunning, matched);
+  renderAccounts(accounts, current?.userId);
 }
 
-function openSwitch(account) {
+function openSwitch(account, isCurrent = false) {
   pendingSwitchId = account.id;
-  $('#switchMsg').textContent = `将切换到「${account.name}」${
-    account.nickname ? `（${account.nickname}）` : ''
-  }。当前登录状态会先备份。`;
+  const nick = account.nickname ? `（${account.nickname}）` : '';
+  $('#switchMsg').textContent = isCurrent
+    ? `「${account.name}」${nick} 已是当前登录。将重新写入该档案的登录态（当前状态会先备份）。`
+    : `将切换到「${account.name}」${nick}。当前登录状态会先备份，IMA 若在运行会先关闭。`;
   $('#dlgSwitch').showModal();
 }
 
@@ -142,15 +261,11 @@ function openExport(account) {
 $('#btnRefresh').onclick = () => refresh().catch((e) => toast(e.message, true));
 
 $('#btnSave').onclick = () => {
-  $('#saveForm').name.value = '';
+  const nick = health.current?.nickname || '';
+  $('#saveForm').name.value = nick;
   $('#saveForm').note.value = '';
   $('#dlgSave').showModal();
 };
-
-$('#saveForm').addEventListener('submit', async (ev) => {
-  // method=dialog: ok button value ok
-  // handle after close
-});
 
 $('#dlgSave').addEventListener('close', async () => {
   if ($('#dlgSave').returnValue !== 'ok') return;
@@ -251,5 +366,5 @@ $('#dlgImport').addEventListener('close', async () => {
 
 refresh().catch((e) => toast(e.message, true));
 setInterval(() => {
-  loadHealth().catch(() => {});
-}, 5000);
+  refresh().catch(() => {});
+}, 4000);

@@ -6,6 +6,7 @@ import { VaultStore } from './vault/store.js';
 import { captureAccount, resaveAccount, switchAccount } from './vault/snapshot.js';
 import { exportAccount, importAccount, saveExportFile } from './vault/exportImport.js';
 import { discoverIma } from './ima/discover.js';
+import { readIdentityFromUserData } from './ima/identity.js';
 import { isImaRunning, stopIma, startIma } from './ima/process.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,6 +105,10 @@ async function handleApi(req, res, ctx) {
 
   if (p === '/api/health' && method === 'GET') {
     const running = await isImaRunning();
+    let current = null;
+    if (ima.found) {
+      current = await readIdentityFromUserData(ima.userData).catch(() => null);
+    }
     return sendJson(res, 200, {
       ok: true,
       imaRunning: running,
@@ -111,12 +116,41 @@ async function handleApi(req, res, ctx) {
       imaExe: ima.exe,
       imaFound: ima.found,
       vaultRoot: vault.root,
+      current,
+    });
+  }
+
+  if (p === '/api/current' && method === 'GET') {
+    const running = await isImaRunning();
+    let current = null;
+    if (ima.found) {
+      current = await readIdentityFromUserData(ima.userData).catch(() => null);
+    }
+    const accounts = await vault.listAccounts();
+    const matched =
+      current?.userId && accounts.find((a) => a.userId === current.userId)
+        ? accounts.find((a) => a.userId === current.userId)
+        : null;
+    return sendJson(res, 200, {
+      imaRunning: running,
+      imaFound: ima.found,
+      current,
+      matchedAccount: matched,
     });
   }
 
   if (p === '/api/accounts' && method === 'GET') {
     const accounts = await vault.listAccounts();
-    return sendJson(res, 200, { accounts });
+    let current = null;
+    if (ima.found) {
+      current = await readIdentityFromUserData(ima.userData).catch(() => null);
+    }
+    const running = await isImaRunning();
+    return sendJson(res, 200, {
+      accounts,
+      current,
+      imaRunning: running,
+    });
   }
 
   if (p === '/api/accounts/save' && method === 'POST') {
@@ -222,6 +256,21 @@ async function handleApi(req, res, ctx) {
       name: name || undefined,
     });
     return sendJson(res, 200, { account });
+  }
+
+  if (p === '/api/ima/launch' && method === 'POST') {
+    if (!ima.exeExists) return sendError(res, 400, 'IMA_EXE_MISSING', `IMA exe not found: ${ima.exe}`);
+    if (await isImaRunning()) return sendJson(res, 200, { ok: true, alreadyRunning: true });
+    await startIma(ima.exe);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === '/api/ima/restart' && method === 'POST') {
+    if (!ima.exeExists) return sendError(res, 400, 'IMA_EXE_MISSING', `IMA exe not found: ${ima.exe}`);
+    const stop = await stopIma();
+    if (!stop.stopped) return sendError(res, 500, 'STOP_FAILED', 'failed to stop IMA');
+    await startIma(ima.exe);
+    return sendJson(res, 200, { ok: true });
   }
 
   const delMatch = /^\/api\/accounts\/([^/]+)$/.exec(p);

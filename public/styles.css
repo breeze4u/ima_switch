@@ -54,22 +54,65 @@ h1 { margin: 0; font-size: 28px; letter-spacing: 0.02em; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 h2 { font-size: 16px; margin: 22px 0 12px; color: var(--muted); font-weight: 600; }
+h2 .count { color: #6b7a94; font-weight: 500; }
 .accounts { display: grid; gap: 12px; }
 .card {
+  position: relative;
   display: grid; grid-template-columns: 52px 1fr auto; gap: 14px; align-items: center;
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px 16px;
 }
+.card-current {
+  border-color: rgba(79, 140, 255, 0.45);
+  background: linear-gradient(180deg, rgba(79,140,255,.08), transparent 55%), var(--panel);
+}
+.card.is-current { border-color: rgba(61, 214, 140, 0.4); }
+.card .badge {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: -4px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #9ec0ff;
+  background: rgba(79, 140, 255, 0.15);
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.card .current-pill {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 11px;
+  color: #9af0c8;
+  background: rgba(61, 214, 140, 0.12);
+  border: 1px solid rgba(61, 214, 140, 0.35);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.tag.ok { color: #9af0c8; background: rgba(61,214,140,.12); border: 1px solid rgba(61,214,140,.3); }
+.tag.warn { color: #ffd39a; background: rgba(255,170,60,.12); border: 1px solid rgba(255,170,60,.3); }
+.muted-nick { color: var(--muted); font-weight: 400; font-size: 13px; }
 .avatar {
   width: 52px; height: 52px; border-radius: 12px;
   background: linear-gradient(135deg, #3a4d7a, #243047);
   display: grid; place-items: center; font-weight: 700; font-size: 18px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .card .name { font-weight: 600; font-size: 16px; }
 .card .desc { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.5; }
-.card .ops { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.card .ops { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 320px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); }
 
 dialog {
