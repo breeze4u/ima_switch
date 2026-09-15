@@ -1,0 +1,31 @@
+{
+  "name": "ima-switch",
+  "version": "0.1.0",
+  "description": "腾讯 IMA 电脑端账号切换工具：终端启动，WebUI 管理，支持账号导入导出备份",
+  "type": "module",
+  "bin": {
+    "ima-switch": "src/cli.js"
+  },
+  "files": [
+    "src",
+    "public",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test test/unit.test.js test/vault.test.js test/server.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "ima",
+    "tencent",
+    "account-switch",
+    "webui",
+    "backup"
+  ],
+  "license": "MIT",
+  "dependencies": {}
+}
