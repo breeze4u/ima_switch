@@ -3,50 +3,101 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ima-switch · 腾讯 IMA 账号切换</title>
+  <title>ima-switch · 账号管理</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="app">
-    <header class="top">
-      <div>
-        <h1>ima-switch</h1>
-        <p class="sub">腾讯 IMA 电脑端账号切换与备份</p>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">ima</div>
+        <div class="brand-text">ima-switch</div>
       </div>
-      <div class="status" id="status">
-        <span class="dot" id="runDot"></span>
-        <span id="runText">检测中…</span>
+      <nav class="nav">
+        <button class="nav-item active" data-view="accounts">
+          <span class="nav-icon">◎</span>
+          <span>账号管理</span>
+        </button>
+        <button class="nav-item" data-view="paths">
+          <span class="nav-icon">⚙</span>
+          <span>路径与状态</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="run-pill" id="runPill">
+          <span class="dot" id="runDot"></span>
+          <span id="runText">检测中…</span>
+        </div>
       </div>
-    </header>
+    </aside>
 
-    <section class="meta" id="meta">
-      <div><span class="label">User Data</span><code id="imaPath">-</code></div>
-      <div><span class="label">账号库</span><code id="vaultPath">-</code></div>
-    </section>
+    <main class="main">
+      <section id="view-accounts" class="view">
+        <header class="page-head">
+          <div>
+            <h1>账号管理</h1>
+            <p class="sub">统一管理腾讯 IMA 电脑端账号、切换与备份。</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn ghost" id="btnRefresh" title="刷新">⟳</button>
+          </div>
+        </header>
 
-    <section class="toolbar">
-      <button class="btn primary" id="btnSave">保存当前账号</button>
-      <button class="btn" id="btnOauth">扫码添加账号</button>
-      <button class="btn" id="btnRefresh">刷新</button>
-      <button class="btn" id="btnImport">导入备份</button>
-      <input type="file" id="fileInput" accept=".zip,.enc" hidden />
-    </section>
+        <section class="panel action-panel">
+          <div>
+            <h2>添加与迁移账号</h2>
+            <p class="panel-desc">快速接入新账号，或从已有备份恢复</p>
+          </div>
+          <div class="action-row">
+            <button class="btn primary" id="btnOauth">
+              <span class="btn-ico">▦</span> OAuth 扫码添加
+            </button>
+            <button class="btn" id="btnSave">保存当前账号</button>
+            <button class="btn" id="btnImport">导入备份</button>
+            <button class="btn" id="btnExportCurrent">导出所选</button>
+            <input type="file" id="fileInput" accept=".zip,.enc" hidden />
+          </div>
+        </section>
 
-    <section class="list-wrap">
-      <h2>当前 IMA 登录</h2>
-      <div id="currentCard" class="accounts"></div>
-      <p class="empty" id="currentEmpty" hidden>未能读取当前登录信息。请确认已安装 IMA，或先登录客户端。</p>
-    </section>
+        <section class="list-head">
+          <h2>账号 <span class="count" id="accountCount">0</span></h2>
+        </section>
 
-    <section class="list-wrap">
-      <h2>本地账号档案 <span class="count" id="accountCount"></span></h2>
-      <div id="accounts" class="accounts"></div>
-      <p class="empty" id="empty" hidden>还没有保存的账号。先在 IMA 登录，然后点「保存当前账号」。</p>
-    </section>
+        <section class="current-banner" id="currentBanner" hidden>
+          <div class="current-avatar" id="currentAvatar">?</div>
+          <div class="current-meta">
+            <div class="current-title">
+              当前 IMA 登录
+              <span class="tag ok" id="currentLoginTag">已登录</span>
+              <span class="tag" id="currentMatchTag" hidden>已存档</span>
+            </div>
+            <div class="current-desc" id="currentDesc">-</div>
+          </div>
+          <div class="current-ops">
+            <button class="btn primary sm" id="btnUpdateCurrent">更新档案</button>
+            <button class="btn sm" id="btnLaunchIma">启动 IMA</button>
+          </div>
+        </section>
 
-    <footer class="foot">
-      <span>仅监听 127.0.0.1 · 登态含敏感信息，请勿分享导出包</span>
-    </footer>
+        <div id="accounts" class="cards"></div>
+        <p class="empty" id="empty" hidden>还没有账号。可「保存当前账号」或「OAuth 扫码添加」。</p>
+      </section>
+
+      <section id="view-paths" class="view" hidden>
+        <header class="page-head">
+          <div>
+            <h1>路径与状态</h1>
+            <p class="sub">本机 IMA 安装位置与账号库路径</p>
+          </div>
+        </header>
+        <section class="panel">
+          <div class="kv"><span>User Data</span><code id="imaPath">-</code></div>
+          <div class="kv"><span>可执行文件</span><code id="imaExe">-</code></div>
+          <div class="kv"><span>账号库</span><code id="vaultPath">-</code></div>
+          <div class="kv"><span>IMA 进程</span><span id="imaRunState">-</span></div>
+        </section>
+      </section>
+    </main>
   </div>
 
   <dialog id="dlgSave">
@@ -74,22 +125,6 @@
     </form>
   </dialog>
 
-  <dialog id="dlgOauth">
-    <div class="oauth-body">
-      <h3>扫码添加账号</h3>
-      <p>将打开一个<strong>独立的 IMA 登录窗口</strong>（不影响当前账号）。请在新窗口中完成微信/QQ 扫码登录，登录成功后会自动保存为账号档案。</p>
-      <label>档案名称（可选，默认用昵称） <input id="oauthName" maxlength="64" placeholder="例如：小号" /></label>
-      <div id="oauthStatus" class="oauth-status" hidden>
-        <span class="dot" id="oauthDot"></span>
-        <span id="oauthMsg">等待扫码…</span>
-      </div>
-      <div class="actions">
-        <button type="button" class="btn" id="oauthCancelBtn">关闭</button>
-        <button type="button" class="btn primary" id="oauthStartBtn">打开登录窗口</button>
-      </div>
-    </div>
-  </dialog>
-
   <dialog id="dlgExport">
     <form method="dialog" id="exportForm">
       <h3>导出账号</h3>
@@ -113,6 +148,28 @@
         <button value="ok" class="btn primary">导入</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="dlgOauth">
+    <div class="oauth-body">
+      <h3>OAuth 扫码添加</h3>
+      <div class="oauth-note">
+        <strong>说明：</strong>IMA 登录使用腾讯私有协议，无法在浏览器内直接展示官方二维码。
+        点击后会打开一个<strong>隔离的 IMA 登录窗口</strong>，请在该窗口完成微信/QQ 扫码；
+        本页会自动检测登录并入库，不影响你当前已打开的主客户端账号。
+      </div>
+      <label>档案名称（可选，默认用昵称）
+        <input id="oauthName" maxlength="64" placeholder="例如：小号" />
+      </label>
+      <div id="oauthStatus" class="oauth-status" hidden>
+        <span class="dot" id="oauthDot"></span>
+        <span id="oauthMsg">等待扫码…</span>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="oauthCancelBtn">关闭</button>
+        <button type="button" class="btn primary" id="oauthStartBtn">打开登录窗口</button>
+      </div>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" hidden></div>

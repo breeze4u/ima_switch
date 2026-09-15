@@ -1,11 +1,13 @@
 const $ = (sel) => document.querySelector(sel);
 
 let health = { imaRunning: false, imaFound: false, current: null };
+let accountsCache = [];
 let pendingExportId = null;
 let pendingImportFile = null;
 let pendingSwitchId = null;
 let oauthSessionId = null;
 let oauthPollTimer = null;
+let lastMatchedId = null;
 
 function toast(msg, isErr = false) {
   const el = $('#toast');
@@ -43,26 +45,15 @@ function initials(name) {
   return s.slice(0, 1).toUpperCase() || '?';
 }
 
-function avatarEl(a) {
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar';
+function avatarHtml(a, cls) {
   if (a?.avatarUrl) {
-    const img = document.createElement('img');
-    img.src = a.avatarUrl;
-    img.alt = '';
-    img.referrerPolicy = 'no-referrer';
-    img.onerror = () => {
-      avatar.textContent = initials(a.nickname || a.name);
-    };
-    avatar.appendChild(img);
-  } else {
-    avatar.textContent = initials(a?.nickname || a?.name);
+    return `<img src="${escapeHtml(a.avatarUrl)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('${escapeHtml(initials(a.nickname || a.name))}'))" />`;
   }
-  return avatar;
+  return escapeHtml(initials(a?.nickname || a?.name));
 }
 
 function fmtTime(iso) {
-  if (!iso) return '';
+  if (!iso) return '-';
   try {
     return new Date(iso).toLocaleString('zh-CN', { hour12: false });
   } catch {
@@ -70,10 +61,24 @@ function fmtTime(iso) {
   }
 }
 
+function setNav(view) {
+  document.querySelectorAll('.nav-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === view);
+  });
+  $('#view-accounts').hidden = view !== 'accounts';
+  $('#view-paths').hidden = view !== 'paths';
+}
+
+document.querySelectorAll('.nav-item').forEach((btn) => {
+  btn.onclick = () => setNav(btn.dataset.view);
+});
+
 async function loadHealth() {
   health = await api('/api/health');
   $('#imaPath').textContent = health.imaUserData || '-';
+  $('#imaExe').textContent = health.imaExe || '-';
   $('#vaultPath').textContent = health.vaultRoot || '-';
+  $('#imaRunState').textContent = health.imaRunning ? '运行中' : '未运行';
   const dot = $('#runDot');
   const text = $('#runText');
   if (health.imaRunning) {
@@ -83,79 +88,113 @@ async function loadHealth() {
     dot.className = 'dot off';
     text.textContent = health.imaFound ? 'IMA 未运行' : '未找到 IMA';
   }
+  const btnLaunch = $('#btnLaunchIma');
+  if (btnLaunch) btnLaunch.textContent = health.imaRunning ? '重启 IMA' : '启动 IMA';
 }
 
-function renderCurrent(current, imaRunning, matched) {
-  const box = $('#currentCard');
-  const empty = $('#currentEmpty');
-  box.innerHTML = '';
-  if (!current || !current.userId) {
-    empty.hidden = false;
-    empty.textContent = imaRunning
-      ? 'IMA 正在运行，但未能读取当前登录身份。'
-      : 'IMA 未运行，或本地没有可读的登录信息。';
+function renderCurrent(current, matched) {
+  const banner = $('#currentBanner');
+  if (!current?.userId) {
+    banner.hidden = true;
+    lastMatchedId = null;
     return;
   }
-  empty.hidden = true;
+  banner.hidden = false;
+  $('#currentAvatar').innerHTML = avatarHtml(current);
+  $('#currentDesc').innerHTML =
+    `${escapeHtml(current.nickname || '未命名')} · uid <code>${escapeHtml(current.userId)}</code>` +
+    (current.openid ? ` · openid <code>${escapeHtml(current.openid)}</code>` : '') +
+    (matched ? ` · 已对应「${escapeHtml(matched.name)}」` : '');
+  const loginTag = $('#currentLoginTag');
+  loginTag.textContent = current.isLoggedIn ? '已登录' : '状态未知';
+  loginTag.className = `tag ${current.isLoggedIn ? 'ok' : 'warn'}`;
+  const matchTag = $('#currentMatchTag');
+  matchTag.hidden = !matched;
+  lastMatchedId = matched?.id || null;
+  $('#btnUpdateCurrent').textContent = matched ? `更新「${matched.name}」` : '保存为账号';
+}
 
-  const card = document.createElement('article');
-  card.className = 'card card-current';
-  const badge = document.createElement('div');
-  badge.className = 'badge';
-  badge.textContent = matched ? '当前 · 已存档' : '当前登录';
-  const avatar = avatarEl(current);
-  const mid = document.createElement('div');
-  mid.innerHTML = `
-    <div class="name">
-      ${escapeHtml(current.nickname || '未命名账号')}
-      <span class="tag ${current.isLoggedIn ? 'ok' : 'warn'}">${current.isLoggedIn ? '已登录' : '状态未知'}</span>
-    </div>
-    <div class="desc">
-      uid <code>${escapeHtml(current.userId)}</code>
-      ${current.openid ? ` · openid <code>${escapeHtml(current.openid)}</code>` : ''}
-      ${matched ? `<br/>已对应档案：<strong>${escapeHtml(matched.name)}</strong>（<code>${escapeHtml(matched.id)}</code>）` : ''}
-    </div>`;
-  const ops = document.createElement('div');
-  ops.className = 'ops';
-  const btnSaveAs = document.createElement('button');
-  btnSaveAs.className = 'btn primary';
-  btnSaveAs.textContent = matched ? '更新该档案' : '保存为账号';
-  btnSaveAs.onclick = () => {
-    if (matched) {
-      pendingResave(matched);
-    } else {
-      $('#saveForm').name.value = current.nickname || '';
-      $('#saveForm').note.value = '';
-      $('#dlgSave').showModal();
-    }
-  };
-  const btnLaunch = document.createElement('button');
-  btnLaunch.className = 'btn';
-  btnLaunch.textContent = imaRunning ? '重启 IMA' : '启动 IMA';
-  btnLaunch.onclick = async () => {
-    try {
-      if (imaRunning) {
-        await api('/api/ima/restart', { method: 'POST' });
-        toast('IMA 已重启');
-      } else {
-        await api('/api/ima/launch', { method: 'POST' });
-        toast('IMA 已启动');
+function renderAccounts(accounts, currentUserId) {
+  accountsCache = accounts;
+  const box = $('#accounts');
+  box.innerHTML = '';
+  $('#empty').hidden = accounts.length > 0;
+  $('#accountCount').textContent = String(accounts.length);
+
+  for (const a of accounts) {
+    const isCurrent = !!(currentUserId && a.userId === currentUserId);
+    const card = document.createElement('article');
+    card.className = `card${isCurrent ? ' is-current' : ''}`;
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="card-avatar">${avatarHtml(a)}</div>
+        <div>
+          <div class="card-name">${escapeHtml(a.name)}</div>
+          <div class="card-nick">${escapeHtml(a.nickname || '—')}</div>
+        </div>
+        <div class="card-badges">
+          ${isCurrent ? '<span class="tag now">当前</span>' : ''}
+          <span class="tag">${escapeHtml(a.source || 'local')}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="card-meta">
+          <span>uid <code>${escapeHtml(a.userId || '-')}</code></span>
+          <span>更新 ${escapeHtml(fmtTime(a.updatedAt))}</span>
+        </div>
+        ${a.note ? `<div style="margin-top:6px">备注：${escapeHtml(a.note)}</div>` : ''}
+      </div>
+      <div class="card-ops"></div>
+    `;
+    const ops = card.querySelector('.card-ops');
+
+    const btnSwitch = document.createElement('button');
+    btnSwitch.className = 'btn primary sm';
+    btnSwitch.textContent = isCurrent ? '重新应用' : '切换';
+    btnSwitch.onclick = () => openSwitch(a, isCurrent);
+
+    const btnResave = document.createElement('button');
+    btnResave.className = 'btn sm';
+    btnResave.textContent = '覆盖保存';
+    btnResave.onclick = () => pendingResave(a);
+
+    const btnExport = document.createElement('button');
+    btnExport.className = 'btn sm';
+    btnExport.textContent = '导出';
+    btnExport.onclick = () => openExport(a);
+
+    const btnDelete = document.createElement('button');
+    btnDelete.className = 'btn danger sm';
+    btnDelete.textContent = '删除';
+    btnDelete.onclick = async () => {
+      if (!confirm(`删除账号「${a.name}」？此操作不可恢复。`)) return;
+      try {
+        await api(`/api/accounts/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
+        toast('已删除');
+        await refresh();
+      } catch (e) {
+        toast(e.message, true);
       }
-      await refresh();
-    } catch (e) {
-      toast(e.message, true);
-    }
-  };
-  ops.append(btnSaveAs, btnLaunch);
-  card.append(avatar, mid, ops);
-  // badge overlays first column visually via CSS grid
-  card.prepend(badge);
-  box.appendChild(card);
+    };
+
+    ops.append(btnSwitch, btnResave, btnExport, btnDelete);
+    box.appendChild(card);
+  }
+}
+
+async function refresh() {
+  await loadHealth();
+  const { accounts, current } = await api('/api/accounts');
+  const matched =
+    current?.userId && accounts.find((x) => x.userId === current.userId)
+      ? accounts.find((x) => x.userId === current.userId)
+      : null;
+  renderCurrent(current || health.current, matched);
+  renderAccounts(accounts, current?.userId);
 }
 
 async function pendingResave(account) {
-  const running = health.imaRunning;
-  const msg = running
+  const msg = health.imaRunning
     ? `将强制关闭 IMA，并用当前登录状态覆盖「${account.name}」？`
     : `用当前 IMA 登录状态覆盖「${account.name}」？`;
   if (!confirm(msg)) return;
@@ -172,109 +211,63 @@ async function pendingResave(account) {
   }
 }
 
-function renderAccounts(accounts, currentUserId) {
-  const box = $('#accounts');
-  box.innerHTML = '';
-  $('#empty').hidden = accounts.length > 0;
-  $('#accountCount').textContent = accounts.length ? `（${accounts.length}）` : '';
-
-  for (const a of accounts) {
-    const isCurrent = !!(currentUserId && a.userId === currentUserId);
-    const card = document.createElement('article');
-    card.className = `card${isCurrent ? ' is-current' : ''}`;
-    if (isCurrent) {
-      const tag = document.createElement('span');
-      tag.className = 'current-pill';
-      tag.textContent = '当前使用中';
-      card.appendChild(tag);
-    }
-    card.appendChild(avatarEl(a));
-    const mid = document.createElement('div');
-    mid.innerHTML = `
-      <div class="name">
-        ${escapeHtml(a.name)}
-        ${a.nickname ? ` <span class="muted-nick">· ${escapeHtml(a.nickname)}</span>` : ''}
-      </div>
-      <div class="desc">
-        档案 <code>${escapeHtml(a.id)}</code>
-        ${a.userId ? ` · uid <code>${escapeHtml(a.userId)}</code>` : ''}
-        <br/>
-        更新 ${escapeHtml(fmtTime(a.updatedAt) || '-')}
-        ${a.lastUsedAt ? ` · 上次使用 ${escapeHtml(fmtTime(a.lastUsedAt))}` : ''}
-        ${a.note ? `<br/>备注：${escapeHtml(a.note)}` : ''}
-      </div>`;
-    const ops = document.createElement('div');
-    ops.className = 'ops';
-
-    const btnSwitch = document.createElement('button');
-    btnSwitch.className = 'btn primary';
-    btnSwitch.textContent = isCurrent ? '重新应用' : '切换到此账号';
-    btnSwitch.disabled = isCurrent && !health.imaFound;
-    btnSwitch.onclick = () => openSwitch(a, isCurrent);
-
-    const btnResave = document.createElement('button');
-    btnResave.className = 'btn';
-    btnResave.textContent = '覆盖保存';
-    btnResave.onclick = () => pendingResave(a);
-
-    const btnExport = document.createElement('button');
-    btnExport.className = 'btn';
-    btnExport.textContent = '导出';
-    btnExport.onclick = () => openExport(a);
-
-    const btnDelete = document.createElement('button');
-    btnDelete.className = 'btn danger';
-    btnDelete.textContent = '删除';
-    btnDelete.onclick = async () => {
-      if (!confirm(`删除账号「${a.name}」？此操作不可恢复。`)) return;
-      try {
-        await api(`/api/accounts/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
-        toast('已删除');
-        await refresh();
-      } catch (e) {
-        toast(e.message, true);
-      }
-    };
-
-    ops.append(btnSwitch, btnResave, btnExport, btnDelete);
-    card.append(mid, ops);
-    box.appendChild(card);
-  }
-}
-
-async function refresh() {
-  await loadHealth();
-  const { accounts, current, imaRunning } = await api('/api/accounts');
-  const matched =
-    current?.userId && accounts.find((a) => a.userId === current.userId)
-      ? accounts.find((a) => a.userId === current.userId)
-      : null;
-  renderCurrent(current || health.current, imaRunning ?? health.imaRunning, matched);
-  renderAccounts(accounts, current?.userId);
-}
-
 function openSwitch(account, isCurrent = false) {
   pendingSwitchId = account.id;
   const nick = account.nickname ? `（${account.nickname}）` : '';
   $('#switchMsg').textContent = isCurrent
-    ? `「${account.name}」${nick} 已是当前登录。将强制关闭 IMA 并重新写入该档案的登录态。`
+    ? `「${account.name}」${nick} 已是当前登录。将强制关闭 IMA 并重新写入该档案。`
     : `将切换到「${account.name}」${nick}。IMA 若正在运行会被强制关闭。`;
   $('#dlgSwitch').showModal();
 }
 
 function openExport(account) {
-  pendingExportId = account.id;
-  $('#exportMsg').textContent = `导出「${account.name}」的登录态快照。`;
+  pendingExportId = account.id || lastMatchedId;
+  if (!pendingExportId) {
+    toast('请先在账号卡片上选择「导出」', true);
+    return;
+  }
+  $('#exportMsg').textContent = `导出「${account.name || '账号'}」的登录态快照。`;
   $('#dlgExport').showModal();
 }
 
 $('#btnRefresh').onclick = () => refresh().catch((e) => toast(e.message, true));
 
 $('#btnSave').onclick = () => {
-  const nick = health.current?.nickname || '';
-  $('#saveForm').name.value = nick;
+  $('#saveForm').name.value = health.current?.nickname || '';
   $('#saveForm').note.value = '';
   $('#dlgSave').showModal();
+};
+
+$('#btnUpdateCurrent').onclick = async () => {
+  if (lastMatchedId) {
+    const acc = accountsCache.find((a) => a.id === lastMatchedId);
+    if (acc) return pendingResave(acc);
+  }
+  $('#btnSave').click();
+};
+
+$('#btnLaunchIma').onclick = async () => {
+  try {
+    if (health.imaRunning) {
+      await api('/api/ima/restart', { method: 'POST' });
+      toast('IMA 已重启');
+    } else {
+      await api('/api/ima/launch', { method: 'POST' });
+      toast('IMA 已启动');
+    }
+    await refresh();
+  } catch (e) {
+    toast(e.message, true);
+  }
+};
+
+$('#btnExportCurrent').onclick = () => {
+  if (!lastMatchedId) {
+    toast('当前登录尚未对应本地档案，请先「保存当前账号」', true);
+    return;
+  }
+  const acc = accountsCache.find((a) => a.id === lastMatchedId);
+  openExport(acc || { id: lastMatchedId, name: '当前账号' });
 };
 
 $('#dlgSave').addEventListener('close', async () => {
@@ -312,106 +305,6 @@ $('#dlgSwitch').addEventListener('close', async () => {
   } finally {
     pendingSwitchId = null;
   }
-});
-
-function setOauthStatus(kind, msg) {
-  const box = $('#oauthStatus');
-  const dot = $('#oauthDot');
-  const text = $('#oauthMsg');
-  box.hidden = false;
-  dot.className = `dot ${kind}`;
-  text.textContent = msg;
-}
-
-function stopOauthPoll() {
-  if (oauthPollTimer) {
-    clearInterval(oauthPollTimer);
-    oauthPollTimer = null;
-  }
-  oauthSessionId = null;
-}
-
-async function pollOauth() {
-  if (!oauthSessionId) return;
-  try {
-    const { session } = await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}`);
-    if (!session) {
-      stopOauthPoll();
-      setOauthStatus('err', '会话不存在');
-      return;
-    }
-    if (session.status === 'waiting' || session.status === 'checking') {
-      setOauthStatus('on', session.message || '等待扫码登录…');
-      return;
-    }
-    if (session.status === 'done') {
-      stopOauthPoll();
-      setOauthStatus('ok', session.message || '已添加');
-      toast(session.message || '扫码账号已添加');
-      $('#oauthStartBtn').disabled = false;
-      $('#oauthStartBtn').textContent = '完成';
-      await refresh();
-      return;
-    }
-    if (session.status === 'failed' || session.status === 'cancelled') {
-      stopOauthPoll();
-      setOauthStatus('err', session.message || '失败');
-      $('#oauthStartBtn').disabled = false;
-      $('#oauthStartBtn').textContent = '重试打开登录窗口';
-      return;
-    }
-  } catch (e) {
-    setOauthStatus('err', e.message);
-  }
-}
-
-$('#btnOauth').onclick = () => {
-  $('#oauthName').value = '';
-  $('#oauthStatus').hidden = true;
-  $('#oauthStartBtn').disabled = false;
-  $('#oauthStartBtn').textContent = '打开登录窗口';
-  stopOauthPoll();
-  $('#dlgOauth').showModal();
-};
-
-$('#oauthCancelBtn').onclick = () => {
-  $('#dlgOauth').close('cancel');
-};
-
-$('#oauthStartBtn').onclick = async () => {
-  const name = $('#oauthName').value.trim();
-  try {
-    $('#oauthStartBtn').disabled = true;
-    $('#oauthStartBtn').textContent = '正在启动…';
-    setOauthStatus('on', '正在打开独立 IMA 登录窗口…');
-    const { session } = await api('/api/oauth/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    oauthSessionId = session.id;
-    setOauthStatus('on', session.message || '请在新窗口扫码登录');
-    $('#oauthStartBtn').textContent = '等待扫码…';
-    stopOauthPoll();
-    oauthPollTimer = setInterval(pollOauth, 2000);
-    await pollOauth();
-  } catch (e) {
-    setOauthStatus('err', e.message);
-    $('#oauthStartBtn').disabled = false;
-    $('#oauthStartBtn').textContent = '重试打开登录窗口';
-  }
-};
-
-$('#dlgOauth').addEventListener('close', async () => {
-  if (oauthSessionId) {
-    try {
-      await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}/cancel`, { method: 'POST' });
-    } catch {
-      // ignore
-    }
-  }
-  stopOauthPoll();
-  await refresh().catch(() => {});
 });
 
 $('#dlgExport').addEventListener('close', async () => {
@@ -475,7 +368,101 @@ $('#dlgImport').addEventListener('close', async () => {
   }
 });
 
+function setOauthStatus(kind, msg) {
+  $('#oauthStatus').hidden = false;
+  $('#oauthDot').className = `dot ${kind}`;
+  $('#oauthMsg').textContent = msg;
+}
+
+function stopOauthPoll() {
+  if (oauthPollTimer) {
+    clearInterval(oauthPollTimer);
+    oauthPollTimer = null;
+  }
+  oauthSessionId = null;
+}
+
+async function pollOauth() {
+  if (!oauthSessionId) return;
+  try {
+    const { session } = await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}`);
+    if (!session) {
+      stopOauthPoll();
+      setOauthStatus('err', '会话不存在');
+      return;
+    }
+    if (session.status === 'waiting' || session.status === 'checking') {
+      setOauthStatus('on', session.message || '请在独立窗口扫码登录…');
+      return;
+    }
+    if (session.status === 'done') {
+      stopOauthPoll();
+      setOauthStatus('ok', session.message || '已添加');
+      toast(session.message || '扫码账号已添加');
+      $('#oauthStartBtn').disabled = false;
+      $('#oauthStartBtn').textContent = '完成';
+      await refresh();
+      return;
+    }
+    if (session.status === 'failed' || session.status === 'cancelled') {
+      stopOauthPoll();
+      setOauthStatus('err', session.message || '失败');
+      $('#oauthStartBtn').disabled = false;
+      $('#oauthStartBtn').textContent = '重试打开登录窗口';
+    }
+  } catch (e) {
+    setOauthStatus('err', e.message);
+  }
+}
+
+$('#btnOauth').onclick = () => {
+  $('#oauthName').value = '';
+  $('#oauthStatus').hidden = true;
+  $('#oauthStartBtn').disabled = false;
+  $('#oauthStartBtn').textContent = '打开登录窗口';
+  stopOauthPoll();
+  $('#dlgOauth').showModal();
+};
+
+$('#oauthCancelBtn').onclick = () => $('#dlgOauth').close('cancel');
+
+$('#oauthStartBtn').onclick = async () => {
+  const name = $('#oauthName').value.trim();
+  try {
+    $('#oauthStartBtn').disabled = true;
+    $('#oauthStartBtn').textContent = '正在启动…';
+    setOauthStatus('on', '正在打开隔离的 IMA 登录窗口…');
+    const { session } = await api('/api/oauth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    oauthSessionId = session.id;
+    setOauthStatus('on', session.message || '请在新窗口扫码登录');
+    $('#oauthStartBtn').textContent = '等待扫码…';
+    stopOauthPoll();
+    oauthPollTimer = setInterval(pollOauth, 2000);
+    await pollOauth();
+  } catch (e) {
+    setOauthStatus('err', e.message);
+    $('#oauthStartBtn').disabled = false;
+    $('#oauthStartBtn').textContent = '重试打开登录窗口';
+  }
+};
+
+$('#dlgOauth').addEventListener('close', async () => {
+  if (oauthSessionId) {
+    try {
+      await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}/cancel`, { method: 'POST' });
+    } catch {
+      // ignore
+    }
+  }
+  stopOauthPoll();
+  await refresh().catch(() => {});
+});
+
 refresh().catch((e) => toast(e.message, true));
 setInterval(() => {
   refresh().catch(() => {});
-}, 4000);
+}, 5000);
