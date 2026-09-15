@@ -71,16 +71,5 @@ test('API health, save blocked when IMA path ok, list empty, import/export', asy
   assert.equal(imp.status, 200, JSON.stringify(impBody));
   assert.ok(impBody.account?.id);
 
-  // switch requires confirmProcess when IMA may be running — do not actually stop real IMA
-  const swNoConfirm = await fetch(`${base}/api/accounts/${impBody.account.id}/switch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ confirmProcess: false, launch: false }),
-  });
-  // If real IMA is running → 409; if not → switch may succeed
-  assert.ok([200, 409, 500].includes(swNoConfirm.status), `unexpected ${swNoConfirm.status}`);
-  if (swNoConfirm.status === 409) {
-    const body = await swNoConfirm.json();
-    assert.equal(body.error.code, 'IMA_RUNNING');
-  }
+  // Do not exercise /switch here: it force-stops real ima.copilot on this machine.
 });

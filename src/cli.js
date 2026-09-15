@@ -31,6 +31,7 @@ Usage:
   ima-switch save <name> [--note ""] [--ima-data <path>]
   ima-switch resave <id|name>
   ima-switch switch <id|name> [--yes] [--no-launch]
+  ima-switch oauth [name]              # 打开独立窗口扫码添加账号
   ima-switch delete <id|name> [--yes]
   ima-switch export <id|name> [-o <file>] [--password <pw>]
   ima-switch import <file> [--password <pw>] [--name <name>]
@@ -179,7 +180,17 @@ async function main() {
     if (!name) fail('usage: ima-switch save <name>');
     const ima = await resolveIma(args.flags);
     if (!ima.found) fail(`IMA User Data not found: ${ima.userData}`);
-    if (await isImaRunning()) fail('IMA is running; close it before save');
+    if (await isImaRunning()) {
+      if (!args.flags.yes && !process.stdin.isTTY) {
+        fail('IMA is running; non-interactive save requires --yes to force-close', 2);
+      }
+      if (!args.flags.yes) {
+        const ok = await confirm('IMA 正在运行。强制关闭后保存当前登录？');
+        if (!ok) fail('cancelled', 2);
+      }
+      const stop = await stopIma();
+      if (!stop.stopped) fail('failed to stop IMA');
+    }
     const result = await captureAccount({
       vault,
       userDataDir: ima.userData,
@@ -197,7 +208,17 @@ async function main() {
     if (!id) fail('usage: ima-switch resave <id|name>');
     const ima = await resolveIma(args.flags);
     if (!ima.found) fail(`IMA User Data not found: ${ima.userData}`);
-    if (await isImaRunning()) fail('IMA is running; close it before resave');
+    if (await isImaRunning()) {
+      if (!args.flags.yes && !process.stdin.isTTY) {
+        fail('IMA is running; non-interactive resave requires --yes to force-close', 2);
+      }
+      if (!args.flags.yes) {
+        const ok = await confirm('IMA 正在运行。强制关闭后覆盖保存？');
+        if (!ok) fail('cancelled', 2);
+      }
+      const stop = await stopIma();
+      if (!stop.stopped) fail('failed to stop IMA');
+    }
     const result = await resaveAccount({ vault, userDataDir: ima.userData, idOrName: id });
     console.log(`Updated account ${result.account.id} (${result.account.name})`);
     return;
@@ -211,18 +232,12 @@ async function main() {
     if (!args.flags.yes && !process.stdin.isTTY) {
       fail('non-interactive switch requires --yes', 2);
     }
-    const running = await isImaRunning();
-    if (running) {
-      if (!args.flags.yes) {
-        const ok = await confirm('IMA is running. Stop it and switch account?');
-        if (!ok) fail('cancelled', 2);
-      }
-      const stop = await stopIma();
-      if (!stop.stopped) fail('failed to stop IMA');
-    } else if (!args.flags.yes) {
-      const ok = await confirm(`Switch to account "${id}"?`);
+    if (!args.flags.yes) {
+      const ok = await confirm(`强制关闭 IMA 并切换到「${id}」？`);
       if (!ok) fail('cancelled', 2);
     }
+    const stop = await stopIma();
+    if (!stop.stopped) fail('failed to stop IMA (try closing it manually)');
     const result = await switchAccount({
       vault,
       userDataDir: ima.userData,
@@ -234,6 +249,35 @@ async function main() {
       console.log('IMA launched');
     }
     return;
+  }
+
+  if (cmd === 'oauth' || cmd === 'qr' || cmd === 'add-qr') {
+    // CLI OAuth helper: start isolated IMA window, wait for login, save account.
+    const ima = await resolveIma(args.flags);
+    if (!ima.exeExists) fail(`IMA exe not found: ${ima.exe}`);
+    const { OauthManager } = await import('./ima/oauth.js');
+    const oauth = new OauthManager({ vault, exePath: ima.exe });
+    const nameHint = args.flags.name || args._[1] || '';
+    console.log('正在打开独立登录窗口，请扫码…');
+    const session = await oauth.start({ nameHint });
+    console.log(`会话 ${session.id}，临时目录 ${session.userDataDir}`);
+    const deadline = Date.now() + 3 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const s = oauth.get(session.id);
+      if (!s) break;
+      const view = oauth.publicView(s);
+      if (view.status === 'done') {
+        console.log(`完成：${view.account?.name} (${view.account?.id})`);
+        return;
+      }
+      if (view.status === 'failed' || view.status === 'cancelled') {
+        fail(view.message || 'oauth failed');
+      }
+      process.stdout.write('.');
+    }
+    await oauth.cancel(session.id);
+    fail('oauth timeout');
   }
 
   if (cmd === 'delete') {

@@ -114,6 +114,16 @@ h2 .count { color: #6b7a94; font-weight: 500; }
 .card .desc { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.5; }
 .card .ops { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 320px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); }
+.hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; line-height: 1.5; }
+.oauth-status {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 12px; padding: 10px 12px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; color: var(--muted);
+}
+.oauth-status .dot.on { background: var(--accent); }
+.oauth-status .dot.ok { background: var(--accent-2); }
+.oauth-status .dot.err { background: var(--danger); }
 
 dialog {
   border: 1px solid var(--border); background: var(--panel); color: var(--text);

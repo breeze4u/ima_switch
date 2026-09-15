@@ -4,6 +4,8 @@ let health = { imaRunning: false, imaFound: false, current: null };
 let pendingExportId = null;
 let pendingImportFile = null;
 let pendingSwitchId = null;
+let oauthSessionId = null;
+let oauthPollTimer = null;
 
 function toast(msg, isErr = false) {
   const el = $('#toast');
@@ -152,9 +154,17 @@ function renderCurrent(current, imaRunning, matched) {
 }
 
 async function pendingResave(account) {
-  if (!confirm(`用当前 IMA 登录状态覆盖「${account.name}」？`)) return;
+  const running = health.imaRunning;
+  const msg = running
+    ? `将强制关闭 IMA，并用当前登录状态覆盖「${account.name}」？`
+    : `用当前 IMA 登录状态覆盖「${account.name}」？`;
+  if (!confirm(msg)) return;
   try {
-    await api(`/api/accounts/${encodeURIComponent(account.id)}/resave`, { method: 'POST' });
+    await api(`/api/accounts/${encodeURIComponent(account.id)}/resave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ forceStop: true }),
+    });
     toast('已覆盖保存');
     await refresh();
   } catch (e) {
@@ -247,8 +257,8 @@ function openSwitch(account, isCurrent = false) {
   pendingSwitchId = account.id;
   const nick = account.nickname ? `（${account.nickname}）` : '';
   $('#switchMsg').textContent = isCurrent
-    ? `「${account.name}」${nick} 已是当前登录。将重新写入该档案的登录态（当前状态会先备份）。`
-    : `将切换到「${account.name}」${nick}。当前登录状态会先备份，IMA 若在运行会先关闭。`;
+    ? `「${account.name}」${nick} 已是当前登录。将强制关闭 IMA 并重新写入该档案的登录态。`
+    : `将切换到「${account.name}」${nick}。IMA 若正在运行会被强制关闭。`;
   $('#dlgSwitch').showModal();
 }
 
@@ -276,7 +286,7 @@ $('#dlgSave').addEventListener('close', async () => {
     await api('/api/accounts/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, note: form.note.value }),
+      body: JSON.stringify({ name, note: form.note.value, forceStop: true }),
     });
     toast('已保存当前账号');
     await refresh();
@@ -289,10 +299,11 @@ $('#dlgSwitch').addEventListener('close', async () => {
   if ($('#dlgSwitch').returnValue !== 'ok' || !pendingSwitchId) return;
   const launch = $('#switchForm').launch.checked;
   try {
+    toast('正在强制关闭 IMA 并切换…');
     await api(`/api/accounts/${encodeURIComponent(pendingSwitchId)}/switch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmProcess: true, launch }),
+      body: JSON.stringify({ launch }),
     });
     toast('切换完成');
     await refresh();
@@ -301,6 +312,106 @@ $('#dlgSwitch').addEventListener('close', async () => {
   } finally {
     pendingSwitchId = null;
   }
+});
+
+function setOauthStatus(kind, msg) {
+  const box = $('#oauthStatus');
+  const dot = $('#oauthDot');
+  const text = $('#oauthMsg');
+  box.hidden = false;
+  dot.className = `dot ${kind}`;
+  text.textContent = msg;
+}
+
+function stopOauthPoll() {
+  if (oauthPollTimer) {
+    clearInterval(oauthPollTimer);
+    oauthPollTimer = null;
+  }
+  oauthSessionId = null;
+}
+
+async function pollOauth() {
+  if (!oauthSessionId) return;
+  try {
+    const { session } = await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}`);
+    if (!session) {
+      stopOauthPoll();
+      setOauthStatus('err', '会话不存在');
+      return;
+    }
+    if (session.status === 'waiting' || session.status === 'checking') {
+      setOauthStatus('on', session.message || '等待扫码登录…');
+      return;
+    }
+    if (session.status === 'done') {
+      stopOauthPoll();
+      setOauthStatus('ok', session.message || '已添加');
+      toast(session.message || '扫码账号已添加');
+      $('#oauthStartBtn').disabled = false;
+      $('#oauthStartBtn').textContent = '完成';
+      await refresh();
+      return;
+    }
+    if (session.status === 'failed' || session.status === 'cancelled') {
+      stopOauthPoll();
+      setOauthStatus('err', session.message || '失败');
+      $('#oauthStartBtn').disabled = false;
+      $('#oauthStartBtn').textContent = '重试打开登录窗口';
+      return;
+    }
+  } catch (e) {
+    setOauthStatus('err', e.message);
+  }
+}
+
+$('#btnOauth').onclick = () => {
+  $('#oauthName').value = '';
+  $('#oauthStatus').hidden = true;
+  $('#oauthStartBtn').disabled = false;
+  $('#oauthStartBtn').textContent = '打开登录窗口';
+  stopOauthPoll();
+  $('#dlgOauth').showModal();
+};
+
+$('#oauthCancelBtn').onclick = () => {
+  $('#dlgOauth').close('cancel');
+};
+
+$('#oauthStartBtn').onclick = async () => {
+  const name = $('#oauthName').value.trim();
+  try {
+    $('#oauthStartBtn').disabled = true;
+    $('#oauthStartBtn').textContent = '正在启动…';
+    setOauthStatus('on', '正在打开独立 IMA 登录窗口…');
+    const { session } = await api('/api/oauth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    oauthSessionId = session.id;
+    setOauthStatus('on', session.message || '请在新窗口扫码登录');
+    $('#oauthStartBtn').textContent = '等待扫码…';
+    stopOauthPoll();
+    oauthPollTimer = setInterval(pollOauth, 2000);
+    await pollOauth();
+  } catch (e) {
+    setOauthStatus('err', e.message);
+    $('#oauthStartBtn').disabled = false;
+    $('#oauthStartBtn').textContent = '重试打开登录窗口';
+  }
+};
+
+$('#dlgOauth').addEventListener('close', async () => {
+  if (oauthSessionId) {
+    try {
+      await api(`/api/oauth/${encodeURIComponent(oauthSessionId)}/cancel`, { method: 'POST' });
+    } catch {
+      // ignore
+    }
+  }
+  stopOauthPoll();
+  await refresh().catch(() => {});
 });
 
 $('#dlgExport').addEventListener('close', async () => {

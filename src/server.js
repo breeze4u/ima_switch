@@ -8,6 +8,7 @@ import { exportAccount, importAccount, saveExportFile } from './vault/exportImpo
 import { discoverIma } from './ima/discover.js';
 import { readIdentityFromUserData } from './ima/identity.js';
 import { isImaRunning, stopIma, startIma } from './ima/process.js';
+import { OauthManager } from './ima/oauth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -97,7 +98,7 @@ async function handleApi(req, res, ctx) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = url.pathname;
   const method = req.method || 'GET';
-  const { vault, opts } = ctx;
+  const { vault, opts, oauth } = ctx;
 
   const ima = await discoverIma({
     userData: opts.imaUserData || undefined,
@@ -118,6 +119,42 @@ async function handleApi(req, res, ctx) {
       vaultRoot: vault.root,
       current,
     });
+  }
+
+  if (p === '/api/oauth' && method === 'GET') {
+    return sendJson(res, 200, { sessions: oauth.list() });
+  }
+
+  if (p === '/api/oauth/start' && method === 'POST') {
+    if (!ima.exeExists) {
+      return sendError(res, 400, 'IMA_EXE_MISSING', `IMA exe not found: ${ima.exe}`);
+    }
+    const body = await readJsonBody(req);
+    try {
+      const session = await oauth.start({ nameHint: String(body.name || '') });
+      return sendJson(res, 200, { session });
+    } catch (err) {
+      return sendError(res, 409, 'OAUTH_BUSY', err.message);
+    }
+  }
+
+  const oauthCancel = /^\/api\/oauth\/([^/]+)\/cancel$/.exec(p);
+  if (oauthCancel && method === 'POST') {
+    const id = decodeURIComponent(oauthCancel[1]);
+    try {
+      const session = await oauth.cancel(id);
+      return sendJson(res, 200, { session });
+    } catch (err) {
+      return sendError(res, 404, 'NOT_FOUND', err.message);
+    }
+  }
+
+  const oauthStatus = /^\/api\/oauth\/([^/]+)$/.exec(p);
+  if (oauthStatus && method === 'GET') {
+    const id = decodeURIComponent(oauthStatus[1]);
+    const session = oauth.get(id);
+    if (!session) return sendError(res, 404, 'NOT_FOUND', `oauth session not found: ${id}`);
+    return sendJson(res, 200, { session: oauth.publicView(session) });
   }
 
   if (p === '/api/current' && method === 'GET') {
@@ -157,10 +194,20 @@ async function handleApi(req, res, ctx) {
     if (!ima.found) {
       return sendError(res, 400, 'IMA_NOT_FOUND', `IMA User Data not found: ${ima.userData}`);
     }
-    if (await isImaRunning()) {
-      return sendError(res, 409, 'IMA_RUNNING', 'IMA is running; close it before save');
-    }
     const body = await readJsonBody(req);
+    const running = await isImaRunning();
+    if (running) {
+      if (body.confirmProcess !== true && body.forceStop !== true) {
+        return sendError(
+          res,
+          409,
+          'IMA_RUNNING',
+          'IMA is running; confirmProcess/forceStop required to auto-close it',
+        );
+      }
+      const stop = await stopIma();
+      if (!stop.stopped) return sendError(res, 500, 'STOP_FAILED', 'failed to stop IMA');
+    }
     const name = String(body.name || '').trim();
     if (!name) return sendError(res, 400, 'NAME_REQUIRED', 'name is required');
     const result = await captureAccount({
@@ -169,6 +216,13 @@ async function handleApi(req, res, ctx) {
       name,
       note: String(body.note || ''),
     });
+    if (body.launch === true && ima.exeExists) {
+      try {
+        await startIma(ima.exe);
+      } catch {
+        // non-fatal
+      }
+    }
     return sendJson(res, 200, { account: result.account, copied: result.snapshot.copied.length });
   }
 
@@ -179,21 +233,29 @@ async function handleApi(req, res, ctx) {
     }
     const id = decodeURIComponent(switchMatch[1]);
     const body = await readJsonBody(req);
-    const running = await isImaRunning();
-    if (running && body.confirmProcess !== true) {
-      return sendError(res, 409, 'IMA_RUNNING', 'IMA is running; confirmProcess required');
+    // Always force-close IMA before switch — no manual exit required.
+    const stop = await stopIma();
+    if (!stop.stopped) {
+      return sendError(res, 500, 'STOP_FAILED', 'failed to stop IMA (try closing it manually)');
     }
-    if (running) {
-      const stop = await stopIma();
-      if (!stop.stopped) {
-        return sendError(res, 500, 'STOP_FAILED', 'failed to stop IMA');
+    let result;
+    try {
+      result = await switchAccount({
+        vault,
+        userDataDir: ima.userData,
+        idOrName: id,
+      });
+    } catch (err) {
+      // best-effort relaunch previous state
+      if (ima.exeExists) {
+        try {
+          await startIma(ima.exe);
+        } catch {
+          // ignore
+        }
       }
+      return sendError(res, 500, 'SWITCH_FAILED', err.message);
     }
-    const result = await switchAccount({
-      vault,
-      userDataDir: ima.userData,
-      idOrName: id,
-    });
     if (body.launch !== false && ima.exeExists) {
       try {
         await startIma(ima.exe);
@@ -209,11 +271,28 @@ async function handleApi(req, res, ctx) {
     if (!ima.found) {
       return sendError(res, 400, 'IMA_NOT_FOUND', `IMA User Data not found: ${ima.userData}`);
     }
+    const body = await readJsonBody(req);
     if (await isImaRunning()) {
-      return sendError(res, 409, 'IMA_RUNNING', 'IMA is running; close it before resave');
+      if (body.confirmProcess !== true && body.forceStop !== true) {
+        return sendError(
+          res,
+          409,
+          'IMA_RUNNING',
+          'IMA is running; confirmProcess/forceStop required to auto-close it',
+        );
+      }
+      const stop = await stopIma();
+      if (!stop.stopped) return sendError(res, 500, 'STOP_FAILED', 'failed to stop IMA');
     }
     const id = decodeURIComponent(resaveMatch[1]);
     const result = await resaveAccount({ vault, userDataDir: ima.userData, idOrName: id });
+    if (body.launch === true && ima.exeExists) {
+      try {
+        await startIma(ima.exe);
+      } catch {
+        // non-fatal
+      }
+    }
     return sendJson(res, 200, { account: result.account });
   }
 
@@ -318,6 +397,12 @@ function isAllowedOrigin(req) {
 }
 
 export async function createServer({ vault, opts }) {
+  const imaInfo = await discoverIma({ userData: opts.imaUserData || undefined });
+  const oauth = new OauthManager({
+    vault,
+    exePath: imaInfo.exeExists ? imaInfo.exe : null,
+  });
+
   const server = http.createServer(async (req, res) => {
     try {
       const p = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -325,7 +410,7 @@ export async function createServer({ vault, opts }) {
         if (req.method !== 'GET' && !isAllowedOrigin(req)) {
           return sendError(res, 403, 'ORIGIN_FORBIDDEN', 'cross-origin API calls are not allowed');
         }
-        await handleApi(req, res, { vault, opts });
+        await handleApi(req, res, { vault, opts, oauth });
       } else {
         await serveStatic(req, res);
       }
@@ -335,6 +420,7 @@ export async function createServer({ vault, opts }) {
       sendError(res, status, 'ERROR', message);
     }
   });
+  server.oauth = oauth;
   return server;
 }
 

@@ -26,6 +26,7 @@
 
     <section class="toolbar">
       <button class="btn primary" id="btnSave">保存当前账号</button>
+      <button class="btn" id="btnOauth">扫码添加账号</button>
       <button class="btn" id="btnRefresh">刷新</button>
       <button class="btn" id="btnImport">导入备份</button>
       <input type="file" id="fileInput" accept=".zip,.enc" hidden />
@@ -64,12 +65,29 @@
     <form method="dialog" id="switchForm">
       <h3>切换账号</h3>
       <p id="switchMsg"></p>
+      <p class="hint">将自动强制关闭 IMA，并在切换完成后重新启动，无需手动退出客户端。</p>
       <label class="check"><input type="checkbox" name="launch" checked /> 切换后启动 IMA</label>
       <div class="actions">
         <button value="cancel" class="btn">取消</button>
-        <button value="ok" class="btn primary">确认切换</button>
+        <button value="ok" class="btn primary">强制切换</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="dlgOauth">
+    <div class="oauth-body">
+      <h3>扫码添加账号</h3>
+      <p>将打开一个<strong>独立的 IMA 登录窗口</strong>（不影响当前账号）。请在新窗口中完成微信/QQ 扫码登录，登录成功后会自动保存为账号档案。</p>
+      <label>档案名称（可选，默认用昵称） <input id="oauthName" maxlength="64" placeholder="例如：小号" /></label>
+      <div id="oauthStatus" class="oauth-status" hidden>
+        <span class="dot" id="oauthDot"></span>
+        <span id="oauthMsg">等待扫码…</span>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="oauthCancelBtn">关闭</button>
+        <button type="button" class="btn primary" id="oauthStartBtn">打开登录窗口</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="dlgExport">
