@@ -1,14 +1,20 @@
 ---
 feature: ima-account-switcher
-status: in-progress
+status: delivered
 updated: 2026-09-15
 branch: feat/ima-account-switcher
-commits: c8b3bf3..c8b3bf3
+commits: c8b3bf3..4521417
 ---
 
 # IMA Account Switcher
 
 ## Report
+
+**What was built** — `ima-switch` 是一个可通过 npm 全局安装的 Windows 腾讯 IMA 账号切换工具。终端运行 `ima-switch` 会启动仅监听 `127.0.0.1` 的 WebUI，同时提供完整 CLI（`save` / `switch` / `list` / `export` / `import` / `delete` / `status` / `launch`）。账号库位于 `~/.ima-switch/accounts/`，对 IMA `User Data` 做选择性登录态快照（Cookies、Local Storage、Preferences.wxlogin、key_info、imsdk、IMA_* 等），切换前写入 `.trash/` 以便失败回滚；导出支持明文 zip 与 AES-256-GCM 密码包。
+
+**Verification** — `npm test` 13/13 PASS（zip/加密往返、身份解析、路径展开、vault save/switch/resave、明文与加密导出导入、路径穿越拒绝、导入分配新 id、HTTP API health/list/export/import）。`node src/cli.js status` 能发现本机 IMA 路径并报告运行状态。WebUI 冒烟：`/api/health` 与 `/` 返回 200。独立审查 4 个 critical（非 TTY 切换门禁、config 覆盖清空、导入路径穿越、同 id 覆盖）已修复并复审关闭。
+
+**Journey log** — 1) 先按真实 IMA 目录逆向确认 Chromium + `tencent.wxlogin.account_meta`，决定选择性快照而非整包 User Data。2) `captureAccount` 首版在写 meta 前 updateMeta 导致失败；改为先 `writeAccount` 再 capture。3) `listen(port=0)` 曾返回错误端口；改为读 `server.address().port`。4) 进程运行检查放在 CLI/API 层而非 snapshot 内核，避免测试误杀本机真实 IMA。5) 复审 criticals 全部关闭；跨机 DPAPI 限制写入 README（导入后可能需重新扫码）。
 
 ## [S1] Problem
 
@@ -246,11 +252,11 @@ ima-switch --version
 
 ## Tasks
 
-- [ ] T1: 脚手架与 package.json/bin — acceptance: `node src/cli.js --help` 可用，包名与 bin 正确 (covers: S2.1)
-- [ ] T2: IMA 路径发现 + 进程检测/停止/启动模块 — acceptance: 对真实机器能解析路径并报告 running 状态；单测覆盖发现逻辑 (covers: S2.2, S2.5)
-- [ ] T3: 身份解析与受管路径列表 — acceptance: 从 Preferences 解析 nickname/userId；路径列表可序列化 (covers: S2.2, S2.3)
-- [ ] T4: Vault save/resave/switch/delete + trash 回滚 — acceptance: fixture User Data 上 save→switch→restore 全流程通过 (covers: S2.3, S2.4)
-- [ ] T5: export/import（含 AES 加密包）— acceptance: 明文 zip 与加密包往返一致，错误密码被拒 (covers: S2.9)
-- [ ] T6: CLI 命令接线 — acceptance: list/save/switch/export/import/delete/status 参数与退出码符合规格 (covers: S2.6)
-- [ ] T7: WebUI + HTTP API — acceptance: 浏览器可完成保存/切换/导入导出；API 错误格式统一 (covers: S2.7, S2.8)
-- [ ] T8: 文档 README 与手工验证记录 — acceptance: 安装启动步骤可跟做；本机手工验证记录写入 Report (covers: S2.1)
+- [x] T1: 脚手架与 package.json/bin — acceptance: `node src/cli.js --help` 可用，包名与 bin 正确 (covers: S2.1)
+- [x] T2: IMA 路径发现 + 进程检测/停止/启动模块 — acceptance: 对真实机器能解析路径并报告 running 状态；单测覆盖发现逻辑 (covers: S2.2, S2.5)
+- [x] T3: 身份解析与受管路径列表 — acceptance: 从 Preferences 解析 nickname/userId；路径列表可序列化 (covers: S2.2, S2.3)
+- [x] T4: Vault save/resave/switch/delete + trash 回滚 — acceptance: fixture User Data 上 save→switch→restore 全流程通过 (covers: S2.3, S2.4)
+- [x] T5: export/import（含 AES 加密包）— acceptance: 明文 zip 与加密包往返一致，错误密码被拒 (covers: S2.9)
+- [x] T6: CLI 命令接线 — acceptance: list/save/switch/export/import/delete/status 参数与退出码符合规格 (covers: S2.6)
+- [x] T7: WebUI + HTTP API — acceptance: 浏览器可完成保存/切换/导入导出；API 错误格式统一 (covers: S2.7, S2.8)
+- [x] T8: 文档 README 与手工验证记录 — acceptance: 安装启动步骤可跟做；本机手工验证记录写入 Report (covers: S2.1)
