@@ -103,12 +103,10 @@ async function main() {
 
   const vault = new VaultStore(args.flags.vault || defaultVaultRoot());
   await vault.init();
-  const config = await vault.loadConfig({
-    imaUserData: args.flags.imaData || null,
-    webPort: args.flags.port || undefined,
-  });
-  if (args.flags.imaData) config.imaUserData = args.flags.imaData;
-  if (args.flags.port) config.webPort = args.flags.port;
+  const overrides = {};
+  if (args.flags.imaData) overrides.imaUserData = args.flags.imaData;
+  if (args.flags.port) overrides.webPort = args.flags.port;
+  const config = await vault.loadConfig(overrides);
 
   if (cmd === 'start' || cmd === 'web' || cmd === 'ui') {
     const opts = {
@@ -210,6 +208,9 @@ async function main() {
     if (!id) fail('usage: ima-switch switch <id|name>');
     const ima = await resolveIma(args.flags);
     if (!ima.found) fail(`IMA User Data not found: ${ima.userData}`);
+    if (!args.flags.yes && !process.stdin.isTTY) {
+      fail('non-interactive switch requires --yes', 2);
+    }
     const running = await isImaRunning();
     if (running) {
       if (!args.flags.yes) {
@@ -218,7 +219,7 @@ async function main() {
       }
       const stop = await stopIma();
       if (!stop.stopped) fail('failed to stop IMA');
-    } else if (!args.flags.yes && process.stdin.isTTY) {
+    } else if (!args.flags.yes) {
       const ok = await confirm(`Switch to account "${id}"?`);
       if (!ok) fail('cancelled', 2);
     }

@@ -70,14 +70,7 @@ export async function expandManagedPaths(userDataDir, { readdir, pathExists: exi
       if (name.startsWith('IMA_')) {
         extra.push(path.join('Default', name));
       }
-      if (
-        name.startsWith('https_ima.qq.com_') &&
-        (name.endsWith('.indexeddb.leveldb') || name === 'https_ima.qq.com_0.indexeddb.leveldb')
-      ) {
-        extra.push(path.join('Default', 'IndexedDB', name));
-      }
     }
-    // also scan IndexedDB parent for ima.qq.com origins
     const idb = path.join(defaultDir, 'IndexedDB');
     if (await check(idb)) {
       const origins = await read(idb);

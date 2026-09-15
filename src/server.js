@@ -240,8 +240,9 @@ async function serveStatic(req, res) {
   let urlPath = new URL(req.url, 'http://127.0.0.1').pathname;
   if (urlPath === '/') urlPath = '/index.html';
   const safe = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
-  const file = path.join(PUBLIC_DIR, safe);
-  if (!file.startsWith(PUBLIC_DIR)) {
+  const file = path.resolve(path.join(PUBLIC_DIR, safe));
+  const publicRoot = path.resolve(PUBLIC_DIR) + path.sep;
+  if (file !== path.resolve(PUBLIC_DIR) && !file.startsWith(publicRoot)) {
     res.writeHead(403);
     return res.end('Forbidden');
   }
@@ -256,11 +257,25 @@ async function serveStatic(req, res) {
   }
 }
 
+function isAllowedOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true; // same-origin navigation / curl
+  try {
+    const u = new URL(origin);
+    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
 export async function createServer({ vault, opts }) {
   const server = http.createServer(async (req, res) => {
     try {
       const p = new URL(req.url, 'http://127.0.0.1').pathname;
       if (p.startsWith('/api/')) {
+        if (req.method !== 'GET' && !isAllowedOrigin(req)) {
+          return sendError(res, 403, 'ORIGIN_FORBIDDEN', 'cross-origin API calls are not allowed');
+        }
         await handleApi(req, res, { vault, opts });
       } else {
         await serveStatic(req, res);

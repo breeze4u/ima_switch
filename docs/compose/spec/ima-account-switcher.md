@@ -1,6 +1,6 @@
 ---
 feature: ima-account-switcher
-status: designed
+status: in-progress
 updated: 2026-09-15
 branch: feat/ima-account-switcher
 commits: c8b3bf3..c8b3bf3

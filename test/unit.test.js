@@ -99,6 +99,56 @@ function pathJoin(...parts) {
   return parts.join('\\').replace(/\\\\+/g, '\\');
 }
 
+test('import rejects path traversal entries', async () => {
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const fs = await import('node:fs/promises');
+  const { importAccount } = await import('../src/vault/exportImport.js');
+  const { VaultStore } = await import('../src/vault/store.js');
+  const { createZip } = await import('../src/util/archive.js');
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ima-switch-trav-'));
+  const vault = await new VaultStore(path.join(root, 'vault')).init();
+  const evil = createZip([
+    { name: 'meta.json', data: Buffer.from(JSON.stringify({ id: 'x', name: 'evil' })) },
+    { name: 'data/../escape.txt', data: Buffer.from('pwned') },
+  ]);
+  await assert.rejects(() => importAccount(vault, evil), /invalid path|escapes/);
+  assert.equal(await fs.access(path.join(root, 'escape.txt')).then(() => true).catch(() => false), false);
+
+  const evilAbs = createZip([
+    { name: 'meta.json', data: Buffer.from(JSON.stringify({ id: 'y', name: 'evil2' })) },
+    { name: 'data/C:/Windows/evil.txt', data: Buffer.from('pwned') },
+  ]);
+  await assert.rejects(() => importAccount(vault, evilAbs), /invalid path|escapes/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('import always allocates a fresh account id', async () => {
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const fs = await import('node:fs/promises');
+  const { importAccount, exportAccount } = await import('../src/vault/exportImport.js');
+  const { VaultStore } = await import('../src/vault/store.js');
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ima-switch-id-'));
+  const vault = await new VaultStore(path.join(root, 'vault')).init();
+  const { captureAccount } = await import('../src/vault/snapshot.js');
+  const userData = path.join(root, 'User Data');
+  await fs.mkdir(path.join(userData, 'Default'), { recursive: true });
+  await fs.writeFile(
+    path.join(userData, 'Default', 'Preferences'),
+    JSON.stringify({ tencent: { wxlogin: { account_meta: JSON.stringify({ is_login: true, user_id: 'u1', user_info: { open_info: { nickname: 'n1' } } }) } } }),
+  );
+  const saved = await captureAccount({ vault, userDataDir: userData, name: 'orig' });
+  const exp = await exportAccount(vault, saved.account.id);
+  const again = await importAccount(vault, exp.buffer, { name: 'orig-copy' });
+  assert.notEqual(again.id, saved.account.id);
+  const list = await vault.listAccounts();
+  assert.equal(list.length, 2);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test('discoverIma missing does not throw', async () => {
   const info = await discoverIma({ imaRoot: 'C:\\definitely\\missing\\ima' });
   assert.equal(info.found, false);

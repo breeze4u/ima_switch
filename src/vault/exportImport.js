@@ -2,7 +2,35 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createZip, readZip, encryptPayload, decryptPayload, isEncryptedPackage } from '../util/archive.js';
 import { ensureDir, pathExists, removePath } from '../util/fsx.js';
-import { readJson } from '../util/fsx.js';
+
+function makeImportId() {
+  const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `acc_${ts}_${rand}`;
+}
+
+function isSafeRelativePath(rel) {
+  if (!rel || typeof rel !== 'string') return false;
+  const normalized = rel.replace(/\\/g, '/');
+  if (path.isAbsolute(rel) || /^[a-zA-Z]:/.test(normalized) || normalized.startsWith('//')) {
+    return false;
+  }
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.some((s) => s === '..' || s === '.')) return false;
+  return true;
+}
+
+async function resolveContained(baseDir, rel) {
+  if (!isSafeRelativePath(rel)) {
+    throw new Error(`invalid path in package: ${rel}`);
+  }
+  const dest = path.resolve(baseDir, rel.replace(/\\/g, '/'));
+  const base = path.resolve(baseDir);
+  if (dest !== base && !dest.startsWith(base + path.sep)) {
+    throw new Error(`path escapes extract dir: ${rel}`);
+  }
+  return dest;
+}
 
 async function walkFiles(dir, base = dir) {
   const out = [];
@@ -43,15 +71,14 @@ export async function importAccount(vault, fileBuffer, { password, name } = {}) 
   let zipBuf = fileBuffer;
   if (isEncryptedPackage(fileBuffer)) {
     zipBuf = decryptPayload(fileBuffer, password || '');
-  } else if (password) {
-    // plain zip with password provided — ignore password? treat as plain
   }
   const files = readZip(zipBuf);
   const metaEntry = files.find((f) => f.name === 'meta.json' || f.name.endsWith('/meta.json'));
   if (!metaEntry) throw new Error('invalid package: meta.json missing');
   const meta = JSON.parse(metaEntry.data.toString('utf8'));
   const now = new Date().toISOString();
-  const id = meta.id || `acc_${Date.now().toString(36)}_imp`;
+  // Always allocate a fresh id so re-import never overwrites an existing account.
+  const id = makeImportId();
   const finalName = name ? await vault.uniqueName(name) : await vault.uniqueName(meta.name || 'imported');
   const nextMeta = {
     ...meta,
@@ -64,20 +91,22 @@ export async function importAccount(vault, fileBuffer, { password, name } = {}) 
   };
 
   const tmpRoot = path.join(vault.root, '.tmp-import', `${id}-${process.pid}`);
+  const dataRoot = path.join(tmpRoot, 'data');
   await removePath(tmpRoot);
-  await ensureDir(tmpRoot);
+  await ensureDir(dataRoot);
   try {
     for (const f of files) {
       if (f.name === 'meta.json' || f.name.endsWith('/meta.json')) continue;
       let rel = f.name;
       if (rel.startsWith('data/')) rel = rel.slice('data/'.length);
-      if (rel.includes('..')) throw new Error('invalid path in package');
-      const dest = path.join(tmpRoot, 'data', rel);
+      const dest = await resolveContained(dataRoot, rel);
       await ensureDir(path.dirname(dest));
       await fs.writeFile(dest, f.data);
     }
-    const dataSrc = path.join(tmpRoot, 'data');
-    const account = await vault.writeAccount(nextMeta, (await pathExists(dataSrc)) ? dataSrc : null);
+    const account = await vault.writeAccount(
+      nextMeta,
+      (await pathExists(dataRoot)) ? dataRoot : null,
+    );
     return account;
   } finally {
     await removePath(tmpRoot);

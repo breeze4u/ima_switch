@@ -99,6 +99,9 @@ export async function resaveAccount({ vault, userDataDir, idOrName }) {
   if (!existing) throw new Error(`account not found: ${idOrName}`);
   const identity = await readIdentityFromUserData(userDataDir);
   const dataDir = vault.accountDataPath(existing.id);
+  // Clear previous snapshot so managed paths removed from live data don't linger.
+  await removePath(dataDir);
+  await ensureDir(dataDir);
   const snap = await captureSnapshot(userDataDir, dataDir);
   const updated = await vault.updateMeta(existing.id, {
     userId: identity?.userId || existing.userId,
