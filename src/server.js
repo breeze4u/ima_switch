@@ -10,6 +10,11 @@ import { readIdentityFromUserData } from './ima/identity.js';
 import { isImaRunning, stopIma, startIma } from './ima/process.js';
 import { OauthManager } from './ima/oauth.js';
 import { exchangeWxCode, buildWxQrUrl, imaScanRedirectUri, IMA_WX_APPID } from './ima/wxLogin.js';
+import {
+  readAuthFromUserData,
+  listCopilotActivities,
+  claimDailyLoginBenefits,
+} from './ima/benefit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -124,6 +129,53 @@ async function handleApi(req, res, ctx) {
 
   if (p === '/api/oauth' && method === 'GET') {
     return sendJson(res, 200, { sessions: oauth.list() });
+  }
+
+  if (p === '/api/benefit' && method === 'GET') {
+    if (!ima.found) return sendError(res, 400, 'IMA_NOT_FOUND', `IMA User Data not found: ${ima.userData}`);
+    try {
+      const auth = await readAuthFromUserData(ima.userData);
+      if (!auth) return sendError(res, 401, 'NO_AUTH', '未能读取当前登录 token');
+      const activities = await listCopilotActivities(auth);
+      return sendJson(res, 200, {
+        userId: auth.userId,
+        nickname: auth.nickname,
+        activities: activities.map((a) => ({
+          id: a.id,
+          title: a.title,
+          description: a.description,
+          activityType: a.activityType,
+          finished: a.finished,
+          userActStatus: a.userActStatus,
+        })),
+      });
+    } catch (err) {
+      return sendError(res, 502, 'BENEFIT_ERROR', err.message);
+    }
+  }
+
+  if (p === '/api/benefit/claim' && method === 'POST') {
+    if (!ima.found) return sendError(res, 400, 'IMA_NOT_FOUND', `IMA User Data not found: ${ima.userData}`);
+    try {
+      const auth = await readAuthFromUserData(ima.userData);
+      if (!auth) return sendError(res, 401, 'NO_AUTH', '未能读取当前登录 token');
+      const result = await claimDailyLoginBenefits(auth);
+      return sendJson(res, 200, {
+        userId: auth.userId,
+        nickname: auth.nickname,
+        claimed: result.claimed,
+        activities: result.activities.map((a) => ({
+          id: a.id,
+          title: a.title,
+          description: a.description,
+          activityType: a.activityType,
+          finished: a.finished,
+          userActStatus: a.userActStatus,
+        })),
+      });
+    } catch (err) {
+      return sendError(res, 502, 'BENEFIT_ERROR', err.message);
+    }
   }
 
   if (p === '/api/oauth/qr' && method === 'GET') {

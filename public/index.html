@@ -18,6 +18,10 @@
           <span class="nav-icon">◎</span>
           <span>账号管理</span>
         </button>
+        <button class="nav-item" data-view="benefit">
+          <span class="nav-icon">✦</span>
+          <span>每日算力</span>
+        </button>
         <button class="nav-item" data-view="paths">
           <span class="nav-icon">⚙</span>
           <span>路径与状态</span>
@@ -81,6 +85,23 @@
 
         <div id="accounts" class="cards"></div>
         <p class="empty" id="empty" hidden>还没有账号。可「保存当前账号」或「OAuth 扫码添加」。</p>
+      </section>
+
+      <section id="view-benefit" class="view" hidden>
+        <header class="page-head">
+          <div>
+            <h1>每日登录福利</h1>
+            <p class="sub">对应 IMA「我的 Copilot → 设置 → 用量统计 → 每日登录福利 → 领取算力」</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn primary" id="btnClaimBenefit">领取算力</button>
+            <button class="btn" id="btnRefreshBenefit">刷新</button>
+          </div>
+        </header>
+        <section class="panel">
+          <div id="benefitStatus" class="panel-desc">点击「领取算力」自动完成每日登录福利领取。</div>
+          <div id="benefitList" class="cards" style="margin-top:14px"></div>
+        </section>
       </section>
 
       <section id="view-paths" class="view" hidden>

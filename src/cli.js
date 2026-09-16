@@ -13,6 +13,11 @@ import { discoverIma } from './ima/discover.js';
 import { isImaRunning, stopIma, startIma } from './ima/process.js';
 import { startWebUi } from './server.js';
 import { defaultVaultRoot } from './util/fsx.js';
+import {
+  readAuthFromUserData,
+  listCopilotActivities,
+  claimDailyLoginBenefits,
+} from './ima/benefit.js';
 
 const pkg = JSON.parse(
   await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -32,6 +37,8 @@ Usage:
   ima-switch resave <id|name>
   ima-switch switch <id|name> [--yes] [--no-launch]
   ima-switch oauth [name]              # 打开独立窗口扫码添加账号
+  ima-switch benefit                   # 查看每日登录福利/算力活动
+  ima-switch benefit --claim           # 自动领取每日登录算力
   ima-switch delete <id|name> [--yes]
   ima-switch export <id|name> [-o <file>] [--password <pw>]
   ima-switch import <file> [--password <pw>] [--name <name>]
@@ -49,6 +56,7 @@ function parseArgs(argv) {
     else if (a === '--version' || a === '-v') args.flags.version = true;
     else if (a === '--json') args.flags.json = true;
     else if (a === '--yes' || a === '-y') args.flags.yes = true;
+    else if (a === '--claim') args.flags.claim = true;
     else if (a === '--no-open') args.flags.noOpen = true;
     else if (a === '--no-launch') args.flags.noLaunch = true;
     else if (a === '--port') args.flags.port = Number(argv[++i]);
@@ -278,6 +286,37 @@ async function main() {
     }
     await oauth.cancel(session.id);
     fail('oauth timeout');
+  }
+
+  if (cmd === 'benefit') {
+    const ima = await resolveIma(args.flags);
+    if (!ima.found) fail(`IMA User Data not found: ${ima.userData}`);
+    const auth = await readAuthFromUserData(ima.userData);
+    if (!auth) fail('未能读取当前登录 token，请先登录 IMA');
+    console.log(`账号 ${auth.nickname || auth.userId}`);
+    if (args.flags.claim || args._[1] === 'claim') {
+      const result = await claimDailyLoginBenefits(auth);
+      console.log(`活动列表 ${result.activities.length} 项，本次领取 ${result.claimed.length} 项`);
+      for (const c of result.claimed) {
+        console.log(c.ok ? `  ✓ ${c.title} (${c.id})` : `  ✗ ${c.title} (${c.id}): ${c.error}`);
+      }
+      if (!result.claimed.length) {
+        console.log('今日没有可领取的每日登录福利（可能已领完）');
+        for (const a of result.activities) {
+          if (a.activityType === 1005 || a.activityType === 1010) {
+            console.log(`  - ${a.title} status=${a.userActStatus}${a.finished ? ' [已完成]' : ''}`);
+          }
+        }
+      }
+      return;
+    }
+    const acts = await listCopilotActivities(auth);
+    for (const a of acts) {
+      const tag = a.finished ? '已完成' : '可领取';
+      console.log(`  [${tag}] ${a.title} type=${a.activityType} id=${a.id} ${a.description}`);
+    }
+    console.log('领取：ima-switch benefit --claim');
+    return;
   }
 
   if (cmd === 'delete') {

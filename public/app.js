@@ -68,7 +68,11 @@ function setNav(view) {
     btn.classList.toggle('active', btn.dataset.view === view);
   });
   $('#view-accounts').hidden = view !== 'accounts';
+  $('#view-benefit').hidden = view !== 'benefit';
   $('#view-paths').hidden = view !== 'paths';
+  if (view === 'benefit') {
+    loadBenefit().catch((e) => toast(e.message, true));
+  }
 }
 
 document.querySelectorAll('.nav-item').forEach((btn) => {
@@ -533,6 +537,57 @@ $('#dlgOauth').addEventListener('close', async () => {
   }
   stopOauthPoll();
   await refresh().catch(() => {});
+});
+
+async function loadBenefit() {
+  $('#benefitStatus').textContent = '加载中…';
+  const data = await api('/api/benefit');
+  $('#benefitStatus').textContent =
+    `当前账号：${data.nickname || data.userId} · 共 ${data.activities.length} 项算力/福利活动`;
+  const box = $('#benefitList');
+  box.innerHTML = '';
+  for (const a of data.activities) {
+    const isDaily = a.activityType === 1005 || a.activityType === 1010;
+    const card = document.createElement('article');
+    card.className = `card${a.finished ? '' : isDaily ? ' is-current' : ''}`;
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="card-avatar">${isDaily ? '✦' : '◎'}</div>
+        <div>
+          <div class="card-name">${escapeHtml(a.title)}</div>
+          <div class="card-nick">${escapeHtml(a.description || '')}</div>
+        </div>
+        <div class="card-badges">
+          <span class="tag ${a.finished ? '' : 'ok'}">${a.finished ? '已完成' : isDaily ? '每日登录' : '活动'}</span>
+        </div>
+      </div>
+      <div class="card-body">类型 ${a.activityType} · ID ${escapeHtml(a.id)} · 状态 ${a.userActStatus}</div>
+    `;
+    box.appendChild(card);
+  }
+}
+
+$('#btnRefreshBenefit')?.addEventListener('click', () => {
+  loadBenefit().catch((e) => toast(e.message, true));
+});
+$('#btnClaimBenefit')?.addEventListener('click', async () => {
+  const btn = $('#btnClaimBenefit');
+  btn.disabled = true;
+  try {
+    $('#benefitStatus').textContent = '正在领取每日登录算力…';
+    const data = await api('/api/benefit/claim', { method: 'POST' });
+    const ok = data.claimed.filter((c) => c.ok);
+    const fail = data.claimed.filter((c) => !c.ok);
+    if (ok.length) toast(`已领取 ${ok.length} 项：${ok.map((c) => c.title).join('、')}`);
+    else if (fail.length) toast(fail[0].error || '领取失败', true);
+    else toast('今日没有可领取的每日登录福利（可能已领完）');
+    await loadBenefit();
+  } catch (e) {
+    toast(e.message, true);
+    $('#benefitStatus').textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 refresh().catch((e) => toast(e.message, true));
