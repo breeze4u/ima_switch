@@ -45,6 +45,11 @@ ima-switch switch 工作号
 ima-switch oauth 小号
 # 或在 WebUI 点「扫码添加账号」
 
+# 每日登录福利自动领取算力（我的 Copilot → 设置 → 用量统计）
+ima-switch benefit           # 查看活动
+ima-switch benefit --claim   # 领取每日登录 100 算力
+# WebUI 侧栏「每日算力」也可一键领取
+
 # 导出 / 导入
 ima-switch export 工作号 -o work.zip
 ima-switch export 工作号 --password mypass
