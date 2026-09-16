@@ -7,3 +7,8 @@ coverage/
 .env.*
 *.tgz
 .worktrees/
+.ima-switch/
+oauth-tmp/
+*.ima-switch.enc
+.vscode/
+.idea/
