@@ -338,9 +338,12 @@ async function main() {
       return;
     }
     const acts = await listCopilotActivities(auth);
+    if (!acts.length) {
+      console.log('没有每日登录福利活动');
+    }
     for (const a of acts) {
       const tag = a.finished ? '已完成' : '可领取';
-      console.log(`  [${tag}] ${a.title} type=${a.activityType} id=${a.id} ${a.description}`);
+      console.log(`  [${tag}] ${a.title} id=${a.id} ${a.description}`);
     }
     console.log('领取：ima-switch benefit --claim');
     console.log('多账号：ima-switch benefit --claim --all');

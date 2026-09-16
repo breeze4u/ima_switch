@@ -250,7 +250,7 @@ function parseResInfo(slotData) {
   });
 }
 
-/** List copilot token activities (daily login benefit etc.). */
+/** List copilot token activities — only 每日登录福利 (type 1005). */
 export async function listCopilotActivities(auth, { fetchImpl = fetch } = {}) {
   const headers = buildImaHeaders(auth);
   const json = await postJson(
@@ -260,7 +260,7 @@ export async function listCopilotActivities(auth, { fetchImpl = fetch } = {}) {
     fetchImpl,
   );
   if (json.code !== 0) throw new Error(json.msg || `query_res_slots failed: ${json.code}`);
-  return parseResInfo(json.slot_data);
+  return parseResInfo(json.slot_data).filter((a) => a.activityType === ACTIVITY_DAILY_LOGIN);
 }
 
 /** Claim one activity by id (complete_activity). */

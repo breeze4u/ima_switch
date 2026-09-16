@@ -552,16 +552,16 @@ async function loadBenefit() {
     card.className = `card${a.finished ? '' : isDaily ? ' is-current' : ''}`;
     card.innerHTML = `
       <div class="card-top">
-        <div class="card-avatar">${isDaily ? '✦' : '◎'}</div>
+        <div class="card-avatar">✦</div>
         <div>
           <div class="card-name">${escapeHtml(a.title)}</div>
           <div class="card-nick">${escapeHtml(a.description || '')}</div>
         </div>
         <div class="card-badges">
-          <span class="tag ${a.finished ? '' : 'ok'}">${a.finished ? '已完成' : isDaily ? '每日登录' : '活动'}</span>
+          <span class="tag ${a.finished ? '' : 'ok'}">${a.finished ? '已完成' : '可领取'}</span>
         </div>
       </div>
-      <div class="card-body">类型 ${a.activityType} · ID ${escapeHtml(a.id)} · 状态 ${a.userActStatus}</div>
+      <div class="card-body">ID ${escapeHtml(a.id)} · 状态 ${a.userActStatus}</div>
     `;
     box.appendChild(card);
   }
