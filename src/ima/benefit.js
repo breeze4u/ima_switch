@@ -214,16 +214,18 @@ export async function claimAllAccounts({ vault, userDataDir, includeLive = true,
       const r = await claimDailyLoginBenefits(t.auth, { fetchImpl });
       const okClaimed = r.claimed.filter((c) => c.ok);
       const failClaimed = r.claimed.filter((c) => !c.ok);
+      const daily = r.dailyInfo;
       results.push({
         label: t.label,
         userId: t.userId,
         ok: failClaimed.length === 0,
         claimed: r.claimed,
         alreadyDone: r.alreadyDone.length,
+        dailyInfo: daily || null,
         message: okClaimed.length
-          ? `领取 ${okClaimed.length} 项`
-          : r.alreadyDone.length
-            ? '今日已领取'
+          ? `领取成功${daily ? ` · 签到${daily.checkinDays}天` : ''}`
+          : daily?.claimedToday || r.alreadyDone.length
+            ? `今日已领取${daily ? ` · 签到${daily.checkinDays}天` : ''}`
             : '无待领取项',
       });
     } catch (err) {
@@ -250,55 +252,121 @@ function parseResInfo(slotData) {
   });
 }
 
-/** List copilot token activities — only 每日登录福利 (type 1005). */
-export async function listCopilotActivities(auth, { fetchImpl = fetch } = {}) {
-  const headers = buildImaHeaders(auth);
-  const json = await postJson(
-    `${API_BASE}/activity_tab/query_res_slots`,
-    { res_slot_types: [RES_SLOT_COPILOT_TOKEN] },
-    headers,
-    fetchImpl,
-  );
-  if (json.code !== 0) throw new Error(json.msg || `query_res_slots failed: ${json.code}`);
-  return parseResInfo(json.slot_data).filter((a) => a.activityType === ACTIVITY_DAILY_LOGIN);
-}
+/** Status codes from daily_login_activity/get_activity_info */
+export const DAY_STATUS = {
+  EXPIRED: 1,
+  CLAIMED: 2,
+  LOCKED: 4,
+};
 
-/** Claim one activity by id (complete_activity). */
-export async function completeActivity(auth, activityId, { fetchImpl = fetch } = {}) {
+/**
+ * Query official daily login activity (每日登录福利).
+ * POST https://ima.qq.com/cgi-bin/daily_login_activity/get_activity_info
+ */
+export async function getDailyLoginInfo(auth, { fetchImpl = fetch } = {}) {
   const headers = buildImaHeaders(auth);
   const json = await postJson(
-    `${API_BASE}/activity_center/complete_activity`,
-    { activity_id: String(activityId) },
+    `${API_BASE}/daily_login_activity/get_activity_info`,
+    {},
     headers,
     fetchImpl,
   );
-  if (json.code !== 0) throw new Error(json.msg || `complete_activity failed: ${json.code}`);
-  return json;
+  if (json.code !== 0) throw new Error(json.msg || `get_activity_info failed: ${json.code}`);
+  const infos = (json.infos || []).map((item, index) => {
+    const top = item?.top || '';
+    const isToday = top === '今日' || item?.status === DAY_STATUS.CLAIMED && index === 2;
+    return {
+      index,
+      top,
+      button: item?.button || '',
+      reward: item?.reward || '',
+      status: item?.status ?? null,
+      isToday: top === '今日',
+      claimed: item?.status === DAY_STATUS.CLAIMED,
+      expired: item?.status === DAY_STATUS.EXPIRED,
+      locked: item?.status === DAY_STATUS.LOCKED,
+    };
+  });
+  const today = infos.find((x) => x.isToday) || null;
+  return {
+    checkinDays: json.checkin_days ?? 0,
+    totalRewardPoints: json.total_reward_points ?? 0,
+    infos,
+    today,
+    claimedToday: !!today?.claimed,
+  };
 }
 
 /**
- * Claim daily login benefits (activity type 1005 when not finished).
- * Type 1010 is a navigate-only activity in the official client and is not claimed via complete_activity.
+ * Claim today's daily login reward.
+ * POST https://ima.qq.com/cgi-bin/daily_login_activity/check_in
+ */
+export async function claimDailyLogin(auth, { fetchImpl = fetch } = {}) {
+  const headers = buildImaHeaders(auth);
+  try {
+    const json = await postJson(
+      `${API_BASE}/daily_login_activity/check_in`,
+      {},
+      headers,
+      fetchImpl,
+    );
+    if (json.code !== 0) throw new Error(json.msg || `check_in failed: ${json.code}`);
+    return { ok: true, raw: json };
+  } catch (err) {
+    // Already claimed / forbidden when today is done — treat as non-fatal if info says claimed.
+    const info = await getDailyLoginInfo(auth, { fetchImpl });
+    if (info.claimedToday) {
+      return { ok: true, already: true, info, error: err.message };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Claim daily login benefits only (type 1005 kept for compatibility; uses official daily_login API).
  */
 export async function claimDailyLoginBenefits(auth, { fetchImpl = fetch } = {}) {
-  const activities = await listCopilotActivities(auth, { fetchImpl });
-  const daily = activities.filter(
-    (a) => a.activityType === ACTIVITY_DAILY_LOGIN && !a.finished && a.id,
-  );
-  const results = [];
-  for (const a of daily) {
-    try {
-      await completeActivity(auth, a.id, { fetchImpl });
-      results.push({ id: a.id, title: a.title, ok: true, activityType: a.activityType });
-    } catch (err) {
-      results.push({
-        id: a.id,
-        title: a.title,
-        ok: false,
-        activityType: a.activityType,
-        error: err.message,
-      });
-    }
+  const info = await getDailyLoginInfo(auth, { fetchImpl });
+  if (info.claimedToday) {
+    return {
+      activities: [],
+      claimed: [],
+      alreadyDone: [{ title: '每日登录福利', finished: true }],
+      dailyInfo: info,
+    };
   }
-  return { activities, claimed: results, alreadyDone: activities.filter((a) => a.finished) };
+  const result = await claimDailyLogin(auth, { fetchImpl });
+  const after = result.info || (await getDailyLoginInfo(auth, { fetchImpl }).catch(() => null));
+  return {
+    activities: [],
+    claimed: [
+      {
+        id: 'daily_login',
+        title: '每日登录福利',
+        ok: !!result.ok,
+        activityType: 1005,
+        already: !!result.already,
+      },
+    ],
+    alreadyDone: [],
+    dailyInfo: after || info,
+  };
+}
+
+/** List — only 每日登录福利 via official API. */
+export async function listCopilotActivities(auth, { fetchImpl = fetch } = {}) {
+  const info = await getDailyLoginInfo(auth, { fetchImpl });
+  return [
+    {
+      id: 'daily_login',
+      title: '每日登录福利',
+      description:
+        info.today?.reward ||
+        `签到 ${info.checkinDays} 天 · 累计 ${info.totalRewardPoints} 算力`,
+      activityType: ACTIVITY_DAILY_LOGIN,
+      userActStatus: info.claimedToday ? USER_ACT_FINISHED : 0,
+      finished: info.claimedToday,
+      dailyInfo: info,
+    },
+  ];
 }

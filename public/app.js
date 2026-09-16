@@ -542,14 +542,29 @@ $('#dlgOauth').addEventListener('close', async () => {
 async function loadBenefit() {
   $('#benefitStatus').textContent = '加载中…';
   const data = await api('/api/benefit');
-  $('#benefitStatus').textContent =
-    `当前账号：${data.nickname || data.userId} · 共 ${data.activities.length} 项算力/福利活动`;
+  const acts = data.activities || [];
+  const a0 = acts[0];
+  const daily = a0?.dailyInfo;
+  if (daily) {
+    $('#benefitStatus').textContent =
+      `当前账号：${data.nickname || data.userId} · 签到 ${daily.checkinDays} 天 · 累计 ${daily.totalRewardPoints} 算力` +
+      (daily.claimedToday ? ' · 今日已领取' : ' · 今日待领取');
+  } else {
+    $('#benefitStatus').textContent = `当前账号：${data.nickname || data.userId}`;
+  }
   const box = $('#benefitList');
   box.innerHTML = '';
-  for (const a of data.activities) {
-    const isDaily = a.activityType === 1005 || a.activityType === 1010;
+  if (!acts.length) {
+    box.innerHTML = '<p class="empty">没有每日登录福利数据</p>';
+    return;
+  }
+  for (const a of acts) {
     const card = document.createElement('article');
-    card.className = `card${a.finished ? '' : isDaily ? ' is-current' : ''}`;
+    card.className = `card${a.finished ? '' : ' is-current'}`;
+    const days = a.dailyInfo?.infos || [];
+    const dayRows = days
+      .map((d) => `<div>${escapeHtml(d.top)} · ${escapeHtml(d.button)} · ${escapeHtml(d.reward)}</div>`)
+      .join('');
     card.innerHTML = `
       <div class="card-top">
         <div class="card-avatar">✦</div>
@@ -558,10 +573,10 @@ async function loadBenefit() {
           <div class="card-nick">${escapeHtml(a.description || '')}</div>
         </div>
         <div class="card-badges">
-          <span class="tag ${a.finished ? '' : 'ok'}">${a.finished ? '已完成' : '可领取'}</span>
+          <span class="tag ${a.finished ? '' : 'ok'}">${a.finished ? '今日已领' : '可领取'}</span>
         </div>
       </div>
-      <div class="card-body">ID ${escapeHtml(a.id)} · 状态 ${a.userActStatus}</div>
+      <div class="card-body">${dayRows}</div>
     `;
     box.appendChild(card);
   }

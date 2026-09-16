@@ -18,6 +18,8 @@ import {
   listCopilotActivities,
   claimDailyLoginBenefits,
   claimAllAccounts,
+  getDailyLoginInfo,
+  claimDailyLogin,
 } from './ima/benefit.js';
 
 const pkg = JSON.parse(
@@ -322,29 +324,24 @@ async function main() {
     if (!auth) fail('未能读取当前登录 token，请先登录 IMA');
     console.log(`账号 ${auth.nickname || auth.userId}`);
     if (wantClaim) {
-      const result = await claimDailyLoginBenefits(auth);
-      console.log(`活动列表 ${result.activities.length} 项，本次领取 ${result.claimed.length} 项`);
-      for (const c of result.claimed) {
-        console.log(c.ok ? `  ✓ ${c.title} (${c.id})` : `  ✗ ${c.title} (${c.id}): ${c.error}`);
+      const info0 = await getDailyLoginInfo(auth);
+      if (info0.claimedToday) {
+        console.log('今日已领取每日登录福利');
+        console.log(`  签到天数 ${info0.checkinDays} · 累计 ${info0.totalRewardPoints} 算力`);
+        return;
       }
-      if (!result.claimed.length) {
-        console.log('今日没有可领取的每日登录福利（可能已领完）');
-        for (const a of result.activities) {
-          if (a.activityType === 1005 || a.activityType === 1010) {
-            console.log(`  - ${a.title} status=${a.userActStatus}${a.finished ? ' [已完成]' : ''}`);
-          }
-        }
+      const result = await claimDailyLogin(auth);
+      console.log(result.already ? '今日已领取' : '领取成功');
+      const info = result.info || (await getDailyLoginInfo(auth).catch(() => null));
+      if (info) {
+        console.log(`  签到天数 ${info.checkinDays} · 累计 ${info.totalRewardPoints} 算力`);
+        if (info.today) console.log(`  今日：${info.today.top} ${info.today.reward} ${info.today.button}`);
       }
       return;
     }
-    const acts = await listCopilotActivities(auth);
-    if (!acts.length) {
-      console.log('没有每日登录福利活动');
-    }
-    for (const a of acts) {
-      const tag = a.finished ? '已完成' : '可领取';
-      console.log(`  [${tag}] ${a.title} id=${a.id} ${a.description}`);
-    }
+    const info = await getDailyLoginInfo(auth);
+    console.log(`  签到天数 ${info.checkinDays} · 累计 ${info.totalRewardPoints} 算力`);
+    console.log(`  今日：${info.today ? `${info.today.button} ${info.today.reward}` : '-'}`);
     console.log('领取：ima-switch benefit --claim');
     console.log('多账号：ima-switch benefit --claim --all');
     return;

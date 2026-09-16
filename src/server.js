@@ -148,6 +148,7 @@ async function handleApi(req, res, ctx) {
           activityType: a.activityType,
           finished: a.finished,
           userActStatus: a.userActStatus,
+          dailyInfo: a.dailyInfo || null,
         })),
       });
     } catch (err) {
@@ -179,6 +180,7 @@ async function handleApi(req, res, ctx) {
         userId: auth.userId,
         nickname: auth.nickname,
         claimed: result.claimed,
+        dailyInfo: result.dailyInfo || null,
         activities: result.activities.map((a) => ({
           id: a.id,
           title: a.title,
@@ -186,6 +188,7 @@ async function handleApi(req, res, ctx) {
           activityType: a.activityType,
           finished: a.finished,
           userActStatus: a.userActStatus,
+          dailyInfo: a.dailyInfo || null,
         })),
       });
     } catch (err) {
