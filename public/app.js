@@ -8,6 +8,8 @@ let pendingSwitchId = null;
 let oauthSessionId = null;
 let oauthPollTimer = null;
 let lastMatchedId = null;
+let qrRetrySession = null;
+let qrWxCode = null;
 
 function toast(msg, isErr = false) {
   const el = $('#toast');
@@ -421,8 +423,79 @@ $('#btnOauth').onclick = () => {
   $('#oauthStartBtn').disabled = false;
   $('#oauthStartBtn').textContent = '打开登录窗口';
   stopOauthPoll();
+  showOauthPane('qr');
+  loadQrFrame().catch((e) => setQrStatus('err', e.message));
   $('#dlgOauth').showModal();
 };
+
+function showOauthPane(which) {
+  $('#paneQr').hidden = which !== 'qr';
+  $('#paneWindow').hidden = which !== 'window';
+  $('#tabQr').classList.toggle('primary', which === 'qr');
+  $('#tabWindow').classList.toggle('primary', which === 'window');
+}
+
+$('#tabQr').onclick = () => {
+  showOauthPane('qr');
+  loadQrFrame().catch((e) => setQrStatus('err', e.message));
+};
+$('#tabWindow').onclick = () => showOauthPane('window');
+$('#qrWindowFallback').onclick = () => showOauthPane('window');
+$('#qrRefreshBtn').onclick = () => loadQrFrame().catch((e) => setQrStatus('err', e.message));
+
+function setQrStatus(kind, msg) {
+  $('#qrStatus').hidden = false;
+  $('#qrDot').className = `dot ${kind}`;
+  $('#qrMsg').textContent = msg;
+}
+
+async function loadQrFrame() {
+  setQrStatus('on', '正在加载微信二维码…');
+  const info = await api('/api/oauth/qr');
+  qrRetrySession = info.retrySession;
+  qrWxCode = null;
+  // Prefer official WeChat qrconnect iframe (ima appid). After scan, iframe redirects to ima.qq.com.
+  const frame = $('#qrFrame');
+  // Use IMA universal wrapper so scan UX matches official; still listen for any code messages.
+  frame.src = info.imaQrUrl;
+  setQrStatus('on', '请使用微信扫描二维码');
+}
+
+// Listen for any postMessage that might carry a WeChat code
+window.addEventListener('message', async (ev) => {
+  const data = ev.data;
+  if (!data || typeof data !== 'object') return;
+  const eventName = data.eventName || data.type;
+  if (eventName === 'loginWxCodeReady' && data.data?.code) {
+    await completeWxCode(data.data.code);
+    return;
+  }
+  // WeChat jssdk style
+  if ((data.code || data.data?.code) && (eventName === 'wx_login' || data.type === 'wx_login' || data.status === 'wx_login')) {
+    await completeWxCode(data.code || data.data.code);
+  }
+});
+
+async function completeWxCode(code) {
+  if (!code || qrWxCode === code) return;
+  qrWxCode = code;
+  setQrStatus('on', '已获取登录凭证，正在入库…');
+  try {
+    const name = $('#oauthName').value.trim() || undefined;
+    await api('/api/oauth/wx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, name }),
+    });
+    setQrStatus('ok', '扫码账号已添加');
+    toast('扫码账号已添加');
+    await refresh();
+  } catch (e) {
+    setQrStatus('err', e.message);
+    toast(e.message, true);
+    qrWxCode = null;
+  }
+}
 
 $('#oauthCancelBtn').onclick = () => $('#dlgOauth').close('cancel');
 

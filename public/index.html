@@ -153,21 +153,48 @@
   <dialog id="dlgOauth">
     <div class="oauth-body">
       <h3>OAuth 扫码添加</h3>
-      <div class="oauth-note">
-        <strong>说明：</strong>IMA 登录使用腾讯私有协议，无法在浏览器内直接展示官方二维码。
-        点击后会打开一个<strong>隔离的 IMA 登录窗口</strong>，请在该窗口完成微信/QQ 扫码；
-        本页会自动检测登录并入库，不影响你当前已打开的主客户端账号。
+      <div class="oauth-tabs">
+        <button type="button" class="btn sm primary" id="tabQr">页内微信扫码</button>
+        <button type="button" class="btn sm" id="tabWindow">独立 IMA 窗口</button>
       </div>
-      <label>档案名称（可选，默认用昵称）
-        <input id="oauthName" maxlength="64" placeholder="例如：小号" />
-      </label>
-      <div id="oauthStatus" class="oauth-status" hidden>
-        <span class="dot" id="oauthDot"></span>
-        <span id="oauthMsg">等待扫码…</span>
+
+      <div id="paneQr">
+        <div class="oauth-note">
+          <strong>页内扫码（推荐先试）</strong><br/>
+          下方为微信官方登录二维码（ima 同款 appid）。请用手机微信扫码确认。
+          <br/><span class="muted">技术说明：ima.qq.com 仅把 OAuth code 通过 postMessage 发给 <code>https://ima.qq.com</code> 白名单源，
+          浏览器无法把 code 送到 <code>127.0.0.1</code>。若扫码后未自动入库，请改用「独立 IMA 窗口」。</span>
+        </div>
+        <div class="qr-frame-wrap" id="qrFrameWrap">
+          <iframe id="qrFrame" title="微信扫码登录" width="320" height="400" frameborder="0"></iframe>
+        </div>
+        <div id="qrStatus" class="oauth-status" hidden>
+          <span class="dot" id="qrDot"></span>
+          <span id="qrMsg">等待扫码…</span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="qrRefreshBtn">刷新二维码</button>
+          <button type="button" class="btn" id="qrWindowFallback">改用独立窗口</button>
+        </div>
       </div>
-      <div class="actions">
-        <button type="button" class="btn" id="oauthCancelBtn">关闭</button>
-        <button type="button" class="btn primary" id="oauthStartBtn">打开登录窗口</button>
+
+      <div id="paneWindow" hidden>
+        <div class="oauth-note">
+          <strong>独立 IMA 登录窗口</strong><br/>
+          打开隔离的 IMA 客户端窗口完成扫码，登录成功后自动保存完整登录态档案（可直接切换）。
+          不影响你当前已打开的主客户端账号。
+        </div>
+        <label>档案名称（可选，默认用昵称）
+          <input id="oauthName" maxlength="64" placeholder="例如：小号" />
+        </label>
+        <div id="oauthStatus" class="oauth-status" hidden>
+          <span class="dot" id="oauthDot"></span>
+          <span id="oauthMsg">等待扫码…</span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="oauthCancelBtn">关闭</button>
+          <button type="button" class="btn primary" id="oauthStartBtn">打开登录窗口</button>
+        </div>
       </div>
     </div>
   </dialog>

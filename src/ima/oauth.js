@@ -6,6 +6,7 @@ import { ensureDir, removePath } from '../util/fsx.js';
 import { startIma, stopPids, isPidAlive } from './process.js';
 import { readIdentityFromUserData } from './identity.js';
 import { captureAccount } from '../vault/snapshot.js';
+import { exchangeWxCode } from './wxLogin.js';
 
 /**
  * In-memory OAuth QR sessions.

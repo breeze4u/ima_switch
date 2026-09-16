@@ -9,6 +9,7 @@ import { discoverIma } from './ima/discover.js';
 import { readIdentityFromUserData } from './ima/identity.js';
 import { isImaRunning, stopIma, startIma } from './ima/process.js';
 import { OauthManager } from './ima/oauth.js';
+import { exchangeWxCode, buildWxQrUrl, imaScanRedirectUri, IMA_WX_APPID } from './ima/wxLogin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -123,6 +124,69 @@ async function handleApi(req, res, ctx) {
 
   if (p === '/api/oauth' && method === 'GET') {
     return sendJson(res, 200, { sessions: oauth.list() });
+  }
+
+  if (p === '/api/oauth/qr' && method === 'GET') {
+    const retrySession = `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const redirectUri = imaScanRedirectUri(retrySession, 'first');
+    return sendJson(res, 200, {
+      appid: IMA_WX_APPID,
+      retrySession,
+      qrUrl: buildWxQrUrl({
+        appid: IMA_WX_APPID,
+        redirectUri,
+        state: retrySession,
+        selfRedirect: true,
+      }),
+      // Official IMA wrapper (posts code only to ima.qq.com whitelist)
+      imaQrUrl: `https://ima.qq.com/login/#/universal-login-qr-only/?targetOrigin=${encodeURIComponent('https://ima.qq.com')}&retrySession=${encodeURIComponent(retrySession)}&flowSource=first`,
+      note: 'WeChat OAuth code is only postMessage\'d to ima.qq.com origins; localhost cannot receive it directly.',
+    });
+  }
+
+  if (p === '/api/oauth/wx' && method === 'POST') {
+    const body = await readJsonBody(req);
+    const code = String(body.code || '').trim();
+    if (!code) return sendError(res, 400, 'CODE_REQUIRED', 'code is required');
+    try {
+      const login = await exchangeWxCode(code);
+      // Save into vault as a new account (metadata only; full profile still via isolated capture)
+      const now = new Date().toISOString();
+      const meta = await vault.createMeta({
+        name: body.name || login.nickname || '扫码账号',
+        note: body.note || '微信扫码登录（token）',
+        identity: {
+          userId: login.userId,
+          nickname: login.nickname,
+          avatarUrl: login.avatarUrl,
+        },
+        source: 'oauth',
+      });
+      const account = await vault.writeAccount(meta, null);
+      const dataDir2 = vault.accountDataPath(account.id);
+      await fs.mkdir(dataDir2, { recursive: true });
+      await fs.writeFile(
+        path.join(dataDir2, 'auth_login.json'),
+        JSON.stringify(login.raw, null, 2),
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dataDir2, 'account_meta.json'),
+        JSON.stringify(login.accountMeta, null, 2),
+        'utf8',
+      );
+      return sendJson(res, 200, {
+        ok: true,
+        account,
+        login: {
+          userId: login.userId,
+          nickname: login.nickname,
+          openid: login.openid,
+        },
+      });
+    } catch (err) {
+      return sendError(res, 502, 'WX_LOGIN_FAILED', err.message);
+    }
   }
 
   if (p === '/api/oauth/start' && method === 'POST') {
