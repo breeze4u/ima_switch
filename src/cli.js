@@ -17,6 +17,7 @@ import {
   readAuthFromUserData,
   listCopilotActivities,
   claimDailyLoginBenefits,
+  claimAllAccounts,
 } from './ima/benefit.js';
 
 const pkg = JSON.parse(
@@ -37,8 +38,9 @@ Usage:
   ima-switch resave <id|name>
   ima-switch switch <id|name> [--yes] [--no-launch]
   ima-switch oauth [name]              # 打开独立窗口扫码添加账号
-  ima-switch benefit                   # 查看每日登录福利/算力活动
-  ima-switch benefit --claim           # 自动领取每日登录算力
+  ima-switch benefit                   # 查看当前账号每日登录福利/算力活动
+  ima-switch benefit --claim           # 领取当前账号每日登录算力
+  ima-switch benefit --claim --all     # 遍历账号库+当前登录，多账号自动领取
   ima-switch delete <id|name> [--yes]
   ima-switch export <id|name> [-o <file>] [--password <pw>]
   ima-switch import <file> [--password <pw>] [--name <name>]
@@ -57,6 +59,7 @@ function parseArgs(argv) {
     else if (a === '--json') args.flags.json = true;
     else if (a === '--yes' || a === '-y') args.flags.yes = true;
     else if (a === '--claim') args.flags.claim = true;
+    else if (a === '--all') args.flags.all = true;
     else if (a === '--no-open') args.flags.noOpen = true;
     else if (a === '--no-launch') args.flags.noLaunch = true;
     else if (a === '--port') args.flags.port = Number(argv[++i]);
@@ -291,10 +294,34 @@ async function main() {
   if (cmd === 'benefit') {
     const ima = await resolveIma(args.flags);
     if (!ima.found) fail(`IMA User Data not found: ${ima.userData}`);
+    const wantClaim = args.flags.claim || args._[1] === 'claim';
+    const wantAll = args.flags.all || args._.includes('--all');
+
+    if (wantClaim && wantAll) {
+      console.log('多账号领取每日登录算力…');
+      const results = await claimAllAccounts({
+        vault,
+        userDataDir: ima.userData,
+        includeLive: true,
+      });
+      let okCount = 0;
+      for (const r of results) {
+        const mark = r.ok ? '✓' : '✗';
+        console.log(`  ${mark} ${r.label}${r.userId ? ` (${r.userId})` : ''}: ${r.error || r.message}`);
+        for (const c of r.claimed || []) {
+          console.log(`      ${c.ok ? '✓' : '✗'} ${c.title}${c.error ? ` — ${c.error}` : ''}`);
+        }
+        if (r.ok) okCount++;
+      }
+      console.log(`完成：${okCount}/${results.length} 个账号处理成功`);
+      if (!okCount && results.length) fail('所有账号领取均失败', 1);
+      return;
+    }
+
     const auth = await readAuthFromUserData(ima.userData);
     if (!auth) fail('未能读取当前登录 token，请先登录 IMA');
     console.log(`账号 ${auth.nickname || auth.userId}`);
-    if (args.flags.claim || args._[1] === 'claim') {
+    if (wantClaim) {
       const result = await claimDailyLoginBenefits(auth);
       console.log(`活动列表 ${result.activities.length} 项，本次领取 ${result.claimed.length} 项`);
       for (const c of result.claimed) {
@@ -316,6 +343,7 @@ async function main() {
       console.log(`  [${tag}] ${a.title} type=${a.activityType} id=${a.id} ${a.description}`);
     }
     console.log('领取：ima-switch benefit --claim');
+    console.log('多账号：ima-switch benefit --claim --all');
     return;
   }
 

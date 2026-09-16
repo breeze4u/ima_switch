@@ -108,19 +108,20 @@ export async function readAuthFromUserData(userDataDir) {
   };
 }
 
-/** Read auth from vault account data (auth_login.json / account_meta.json). */
+/** Read auth from vault account data (auth_login.json / account_meta.json / Preferences snapshot). */
 export async function readAuthFromVaultAccount(accountDataDir) {
   const authPath = path.join(accountDataDir, 'auth_login.json');
   try {
     const raw = JSON.parse(await fs.readFile(authPath, 'utf8'));
     const data = raw.data && typeof raw.data === 'object' ? raw.data : raw;
-    if (data.token && data.user_id) {
+    if (data.token && (data.user_id || data.userId)) {
       return {
-        userId: data.user_id,
-        idType: String(data.id_type ?? '2'),
-        tokenType: String(data.token_type ?? '14'),
+        userId: data.user_id || data.userId,
+        idType: String(data.id_type ?? data.idType ?? '2'),
+        tokenType: String(data.token_type ?? data.tokenType ?? '14'),
         token: data.token,
-        refreshToken: data.refresh_token || '',
+        refreshToken: data.refresh_token || data.refreshToken || '',
+        source: 'auth_login.json',
       };
     }
   } catch {
@@ -136,12 +137,100 @@ export async function readAuthFromVaultAccount(accountDataDir) {
         tokenType: String(meta.token_type ?? '14'),
         token: meta.token,
         refreshToken: meta.refresh_token || '',
+        nickname: meta.user_info?.open_info?.nickname || meta.nickname || '',
+        source: 'account_meta.json',
       };
     }
   } catch {
     // ignore
   }
+  // Selective snapshot may include Default/Preferences with DPAPI secret (same Windows user).
+  const prefsPath = path.join(accountDataDir, 'Default', 'Preferences');
+  try {
+    await fs.access(prefsPath);
+    const auth = await readAuthFromUserData(path.join(accountDataDir));
+    if (auth) {
+      auth.source = 'Preferences+DPAPI';
+      return auth;
+    }
+  } catch {
+    // ignore
+  }
   return null;
+}
+
+/**
+ * Resolve auth for every unique account: live IMA profile + vault accounts.
+ * Dedupes by userId. Each entry: { key, label, auth } or { key, label, error }.
+ */
+export async function collectAccountAuths({ vault, userDataDir, includeLive = true }) {
+  const seen = new Set();
+  const items = [];
+
+  async function push(label, loader) {
+    try {
+      const auth = await loader();
+      if (!auth?.userId || !auth.token) {
+        items.push({ key: label, label, error: 'no usable token' });
+        return;
+      }
+      if (seen.has(auth.userId)) return;
+      seen.add(auth.userId);
+      items.push({
+        key: auth.userId,
+        label: auth.nickname || label,
+        userId: auth.userId,
+        auth,
+      });
+    } catch (err) {
+      items.push({ key: label, label, error: err.message });
+    }
+  }
+
+  if (includeLive && userDataDir) {
+    await push('当前登录', () => readAuthFromUserData(userDataDir));
+  }
+
+  const accounts = await vault.listAccounts();
+  for (const acc of accounts) {
+    const dataDir = vault.accountDataPath(acc.id);
+    await push(acc.name || acc.id, () => readAuthFromVaultAccount(dataDir));
+  }
+  return items;
+}
+
+/**
+ * Claim daily login benefits for all resolvable accounts.
+ */
+export async function claimAllAccounts({ vault, userDataDir, includeLive = true, fetchImpl = fetch } = {}) {
+  const targets = await collectAccountAuths({ vault, userDataDir, includeLive });
+  const results = [];
+  for (const t of targets) {
+    if (t.error) {
+      results.push({ label: t.label, userId: null, ok: false, error: t.error, claimed: [] });
+      continue;
+    }
+    try {
+      const r = await claimDailyLoginBenefits(t.auth, { fetchImpl });
+      const okClaimed = r.claimed.filter((c) => c.ok);
+      const failClaimed = r.claimed.filter((c) => !c.ok);
+      results.push({
+        label: t.label,
+        userId: t.userId,
+        ok: failClaimed.length === 0,
+        claimed: r.claimed,
+        alreadyDone: r.alreadyDone.length,
+        message: okClaimed.length
+          ? `领取 ${okClaimed.length} 项`
+          : r.alreadyDone.length
+            ? '今日已领取'
+            : '无待领取项',
+      });
+    } catch (err) {
+      results.push({ label: t.label, userId: t.userId, ok: false, error: err.message, claimed: [] });
+    }
+  }
+  return results;
 }
 
 function parseResInfo(slotData) {

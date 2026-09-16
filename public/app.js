@@ -590,6 +590,26 @@ $('#btnClaimBenefit')?.addEventListener('click', async () => {
   }
 });
 
+$('#btnClaimAllBenefit')?.addEventListener('click', async () => {
+  const btn = $('#btnClaimAllBenefit');
+  btn.disabled = true;
+  try {
+    $('#benefitStatus').textContent = '正在遍历账号并领取…';
+    const data = await api('/api/benefit/claim-all', { method: 'POST' });
+    await loadBenefit();
+    const lines = data.results.map((r) => `${r.ok ? '✓' : '✗'} ${r.label}: ${r.error || r.message}`);
+    const okCount = data.results.filter((r) => r.ok).length;
+    $('#benefitStatus').innerHTML =
+      `多账号领取：${okCount}/${data.results.length}<br/>` + lines.map(escapeHtml).join('<br/>');
+    toast(`多账号领取完成：${okCount}/${data.results.length}`);
+  } catch (e) {
+    toast(e.message, true);
+    $('#benefitStatus').textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 refresh().catch((e) => toast(e.message, true));
 setInterval(() => {
   refresh().catch(() => {});

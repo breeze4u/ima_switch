@@ -14,6 +14,7 @@ import {
   readAuthFromUserData,
   listCopilotActivities,
   claimDailyLoginBenefits,
+  claimAllAccounts,
 } from './ima/benefit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -149,6 +150,20 @@ async function handleApi(req, res, ctx) {
           userActStatus: a.userActStatus,
         })),
       });
+    } catch (err) {
+      return sendError(res, 502, 'BENEFIT_ERROR', err.message);
+    }
+  }
+
+  if (p === '/api/benefit/claim-all' && method === 'POST') {
+    if (!ima.found) return sendError(res, 400, 'IMA_NOT_FOUND', `IMA User Data not found: ${ima.userData}`);
+    try {
+      const results = await claimAllAccounts({
+        vault,
+        userDataDir: ima.userData,
+        includeLive: true,
+      });
+      return sendJson(res, 200, { results });
     } catch (err) {
       return sendError(res, 502, 'BENEFIT_ERROR', err.message);
     }

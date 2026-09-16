@@ -108,9 +108,28 @@ export class OauthManager {
       session.identity = identity;
       if (session.status === 'waiting' || session.status === 'checking') {
         session.status = 'capturing';
-        session.message = '登录成功，正在保存账号…';
+        session.message = '登录成功，等待凭据写入…';
         this.clearTimer(session);
         try {
+          // Wait until DPAPI secret is flushed so vault snapshots can auto-claim later.
+          const prefsPath = path.join(session.userDataDir, 'Default', 'Preferences');
+          const deadline = Date.now() + 15000;
+          let secretReady = false;
+          while (Date.now() < deadline) {
+            try {
+              const raw = await fs.readFile(prefsPath, 'utf8');
+              if (raw.includes('account_secret_encrypted')) {
+                secretReady = true;
+                break;
+              }
+            } catch {
+              // not yet
+            }
+            await new Promise((r) => setTimeout(r, 400));
+          }
+          if (!secretReady) {
+            session.message = '登录成功，但凭据写入超时，仍尝试保存…';
+          }
           const name = session.nameHint || identity.nickname || '扫码账号';
           const result = await captureAccount({
             vault: this.vault,
